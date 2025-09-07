@@ -307,21 +307,20 @@ namespace Archipelago.Core
                 }
                 var startTime = DateTime.UtcNow;
                 if (_monitorToken.IsCancellationRequested) return;
-                if (EnableLocationsCondition?.Invoke() ?? true)
-                {
-                    foreach (var location in snapshot)
-                    {
+                if (!EnableLocationsCondition?.Invoke() ?? true) return;
+				foreach (var location in snapshot)
+				{
 
-                        var isCompleted = location.Check();// Helpers.CheckLocation(location);
-                        if (isCompleted)
-                        {
-                            SendLocation(location, _monitorToken.Token);
-                            Log.Debug($"{location.Name} ({location.Id}) Completed");
-                            RemoveLocationAsync(location);
-                            //  Log.Logger.Information(JsonConvert.SerializeObject(location));
-                        }
-                    }                   
-                }
+					var isCompleted = location.Check();// Helpers.CheckLocation(location);
+					if (isCompleted)
+					{
+						SendLocation(location, _monitorToken.Token);
+						Log.Debug($"{location.Name} ({location.Id}) Completed");
+						RemoveLocationAsync(location);
+						//  Log.Logger.Information(JsonConvert.SerializeObject(location));
+					}
+				}                   
+                
                 await Task.Delay(500);
             }
         }
