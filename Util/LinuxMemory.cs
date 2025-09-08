@@ -165,6 +165,16 @@ namespace Archipelago.Core.Util
             // Nothing to close in Linux implementation since we use PIDs directly
             return true;
         }
+
+	public int GetPID(string procName)
+	{
+	    Process[] Processes = Process.GetProcessesByName(procName);
+	    if (Processes.Length < 1)
+	    {
+		return 0;
+	    }
+	    return Processes[0].Id;
+	}
         #endregion
 
         #region Module Information
@@ -286,6 +296,7 @@ namespace Archipelago.Core.Util
         }
 
         #endregion
+
     }
 }
 

@@ -83,6 +83,8 @@ namespace Archipelago.Core.Util
 
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern int FormatMessage(uint dwFlags, IntPtr lpSource, uint dwMessageId, uint dwLanguageId, ref IntPtr lpBuffer, uint nSize, IntPtr Arguments);
+	[DllImport("user32.dll", SetLastError = true)]
+        private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processID);
         #endregion
 
         #region Memory Operations
@@ -152,6 +154,24 @@ namespace Archipelago.Core.Util
         {
             return CloseHandle_Win32(handle);
         }
+	public int GetPID(string procName)
+	{
+	    Process[] Processes = Process.GetProcessesByName(procName);
+            if (Processes.Any(x => x.MainWindowHandle > 0))
+            {
+                IntPtr hWnd = Processes.First(x => x.MainWindowHandle > 0).MainWindowHandle;
+                GetWindowThreadProcessId(hWnd, out int PID);
+                return PID;
+            }
+            else
+            {
+		//application is not running
+		return 0;
+	    }
+	}
+
+
+
         #endregion
 
         #region Error Handling
