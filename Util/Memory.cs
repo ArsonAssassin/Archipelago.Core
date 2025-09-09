@@ -73,24 +73,18 @@ namespace Archipelago.Core.Util
             return PlatformImpl.OpenProcess(PROCESS_VM_OPERATION | PROCESS_SUSPEND_RESUME | PROCESS_VM_READ | PROCESS_VM_WRITE, false, proc);
         }
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processID);
-
         public static int GetProcessID(string procName)
         {
-            Process[] Processes = Process.GetProcessesByName(procName);
-            if (Processes.Any(x => x.MainWindowHandle > 0))
-            {
-                IntPtr hWnd = Processes.First(x => x.MainWindowHandle > 0).MainWindowHandle;
-                GetWindowThreadProcessId(hWnd, out int PID);
-                return PID;
-            }
-            else
-            {
-                //application is not running
-                PlatformImpl.CloseHandle(CurrentHandle());
-                return 0;
-            }
+	    int procPID = PlatformImpl.GetPID(procName);
+	    if (procPID > 0)
+	    {
+		return procPID;
+	    }
+	    else
+	    {
+		PlatformImpl.CloseHandle(CurrentHandle());
+		return 0;
+	    }
         }
         public static ulong GetPCSX2Offset()
         {
