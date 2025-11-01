@@ -16,6 +16,7 @@ using Serilog;
 using System.Drawing.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 
 namespace Archipelago.Core
 {
@@ -38,6 +39,10 @@ namespace Archipelago.Core
         public ArchipelagoSession CurrentSession { get; set; }
         private CancellationTokenSource _monitorToken { get; set; }
         private List<ILocation> _monitoredLocations { get; set; } = new List<ILocation>();
+
+        private Channel<ILocation> _locationsChannel;
+        private List<Task> _workerTasks = new List<Task>();
+        private const int WORKER_COUNT = 8;
         public GPSHandler GPSHandler
         {
             get
@@ -239,7 +244,15 @@ namespace Archipelago.Core
         }
         public void CancelMonitors()
         {
-            _monitorToken.Cancel();
+            try
+            {
+                _monitorToken?.Cancel();
+                _locationsChannel?.Writer.Complete();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error cancelling monitors: {ex.Message}");
+            }
         }
         private async Task ReceiveItems(CancellationToken cancellationToken = default)
         {
@@ -294,34 +307,20 @@ namespace Archipelago.Core
                 _receiveItemSemaphore.Release();
             }
         }
-        private async Task ProcessLocationsAsync()
+
+        public async Task AddLocationAsync(ILocation location)
         {
-
-            
-            while (true)
+            lock (_locationListLock)
             {
-                List<ILocation> snapshot;
-                lock (_locationListLock)
+                if (!_monitoredLocations.Any(x => x.Id == location.Id))
                 {
-                    snapshot = _monitoredLocations.Select(loc => loc.DeepClone()).ToList();
-                }
-                var startTime = DateTime.UtcNow;
-                if (_monitorToken.IsCancellationRequested) return;
-                if (!EnableLocationsCondition?.Invoke() ?? true) return;
-				foreach (var location in snapshot)
-				{
+                    _monitoredLocations.Add(location);
 
-					var isCompleted = location.Check();// Helpers.CheckLocation(location);
-					if (isCompleted)
-					{
-						SendLocation(location, _monitorToken.Token);
-						Log.Debug($"{location.Name} ({location.Id}) Completed");
-						RemoveLocationAsync(location);
-						//  Log.Logger.Information(JsonConvert.SerializeObject(location));
-					}
-				}                   
-                
-                await Task.Delay(500);
+                    if (_locationsChannel != null)
+                    {
+                        _locationsChannel.Writer.TryWrite(location);
+                    }
+                }
             }
         }
 
@@ -333,7 +332,7 @@ namespace Archipelago.Core
                 if (confirmedLocation != null)
                 {
                     Log.Verbose($"Location {location.Id} - {location.Name} removed from tracking");
-                    _monitoredLocations?.Remove(confirmedLocation);
+                    _monitoredLocations.Remove(confirmedLocation);
                 }
                 else
                 {
@@ -341,31 +340,113 @@ namespace Archipelago.Core
                 }
             }
         }
-        public async Task AddLocationAsync(ILocation location)
-        {
-            lock (_locationListLock)
-            {
-                if(!_monitoredLocations.Any(x => x.Id == location.Id))
-                    _monitoredLocations?.Add(location);
-            }
-        }
         public async Task MonitorLocations(List<ILocation> locations)
         {
+            _locationsChannel = Channel.CreateUnbounded<ILocation>(new UnboundedChannelOptions
+            {
+                SingleReader = false,  
+                SingleWriter = false, 
+                AllowSynchronousContinuations = false 
+            });
 
             _monitoredLocations = locations;
-            StartMonitoring();
 
+            foreach (var location in locations)
+            {
+                await _locationsChannel.Writer.WriteAsync(location, _monitorToken.Token);
+            }
+
+            await StartMonitoring();
         }
         private async Task StartMonitoring()
         {
-            var tasks = new Task[THREAD_COUNT];
-    
-            for (int i = 0; i < THREAD_COUNT; i++)
+            _workerTasks.Clear();
+
+            for (int i = 0; i < WORKER_COUNT; i++)
             {
-                tasks[i] = Task.Run(() => ProcessLocationsAsync(), _monitorToken.Token);
+                var workerId = i; 
+                var task = Task.Run(async () => await ProcessLocationWorkerAsync(workerId), _monitorToken.Token);
+                _workerTasks.Add(task);
             }
-            await Task.WhenAll(tasks);
+
+            try
+            {
+                await Task.WhenAll(_workerTasks);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Debug("Location monitoring cancelled");
+            }
         }
+        private async Task ProcessLocationWorkerAsync(int workerId)
+        {
+            var reader = _locationsChannel.Reader;
+            var recheckQueue = new Queue<ILocation>();
+
+            Log.Verbose($"Worker {workerId} started");
+
+            while (!_monitorToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var batchChecked = 0;
+
+                    while (batchChecked < BATCH_SIZE && reader.TryRead(out var location))
+                    {
+                        if (_monitorToken.IsCancellationRequested) break;
+
+                        if (EnableLocationsCondition?.Invoke() ?? false)
+                        {
+                            try
+                            {
+                                if (location.Check())
+                                {
+                                    SendLocation(location, _monitorToken.Token);
+                                    Log.Verbose($"[Worker {workerId}] {location.Name} ({location.Id}) Completed");
+                                    await RemoveLocationAsync(location);
+                                }
+                                else
+                                {
+                                    recheckQueue.Enqueue(location);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Log.Error($"[Worker {workerId}] Error checking location {location.Id}: {ex.Message}");                                
+                                recheckQueue.Enqueue(location);
+                            }
+                        }
+                        else
+                        {
+                            recheckQueue.Enqueue(location);
+                        }
+
+                        batchChecked++;
+                    }
+
+                    while (recheckQueue.Count > 0)
+                    {
+                        var location = recheckQueue.Dequeue();
+                        await _locationsChannel.Writer.WriteAsync(location, _monitorToken.Token);
+                    }
+
+                    await Task.Delay(500, _monitorToken.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Log.Verbose($"Worker {workerId} cancelled");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[Worker {workerId}] Unexpected error: {ex.Message}");
+                    await Task.Delay(1000, _monitorToken.Token); // Back off on error
+                }
+            }
+
+            Log.Debug($"Worker {workerId} stopped");
+        }
+
         [Obsolete]
         public async Task MonitorLocationsOld(List<ILocation> locations, CancellationToken cancellationToken = default)
         {
@@ -473,7 +554,6 @@ namespace Archipelago.Core
         {
             var timeSinceLastUpdate = DateTime.UtcNow - _lastGameStateUpdate;
 
-            // If we're in the buffer zone (less than 50 seconds until next save)
             if (timeSinceLastUpdate >= TimeSpan.FromSeconds(10))
             {
                 Log.Verbose($"Performing immediate save");
@@ -647,11 +727,18 @@ namespace Archipelago.Core
 
             try
             {
+                CancelMonitors();
+
+                if (_workerTasks.Any())
+                {
+                    Task.WaitAll(_workerTasks.ToArray(), TimeSpan.FromSeconds(5));
+                }
+
                 ForceSaveAsync().Wait(TimeSpan.FromSeconds(2));
             }
             catch (Exception ex)
             {
-                Log.Error($"Could not perform final save: {ex.Message}");
+                Log.Error($"Could not finalise tasks: {ex.Message}");
             }
 
             if (IsConnected)
