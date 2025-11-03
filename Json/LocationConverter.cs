@@ -1,66 +1,60 @@
 ﻿using Archipelago.Core.Models;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace Archipelago.Core.Json
 {
     internal class LocationConverter : JsonConverter<ILocation>
     {
-        public override bool CanWrite => false;
-
-        public override ILocation ReadJson(JsonReader reader, Type objectType, ILocation existingValue, bool hasExistingValue, JsonSerializer serializer)
+        public override ILocation Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
-            if (reader.TokenType == JsonToken.Null)
+            using var jsonDoc = JsonDocument.ParseValue(ref reader);
+            var root = jsonDoc.RootElement;
+
+            if (root.ValueKind == JsonValueKind.Null)
                 return null;
 
-            var jObject = JObject.Load(reader);
-
-            // Check the CheckType value to determine which class to deserialize to
-            if (jObject.TryGetValue("CheckType", out var checkTypeToken))
+            // Detect the CheckType property
+            if (root.TryGetProperty("CheckType", out var checkTypeElement))
             {
-                var checkType = checkTypeToken.ToObject<LocationCheckType>();
-
-                // If CheckType is AND or OR, deserialize as CompositeLocation
-                if (checkType == LocationCheckType.AND || checkType == LocationCheckType.OR)
+                // Try to parse the CheckType enum
+                if (Enum.TryParse<LocationCheckType>(checkTypeElement.GetString(), out var checkType))
                 {
-                    var loc = new CompositeLocation();
-                    serializer.Populate(jObject.CreateReader(), loc);
-                    return loc;
-                }
-                else
-                {
-                    // Otherwise, deserialize as regular Location
-                    var loc = new Location();
-                    serializer.Populate(jObject.CreateReader(), loc);
-                    return loc;
+                    if (checkType == LocationCheckType.AND || checkType == LocationCheckType.OR)
+                    {
+                        return JsonSerializer.Deserialize<CompositeLocation>(root.GetRawText(), options);
+                    }
+                    else
+                    {
+                        return JsonSerializer.Deserialize<Location>(root.GetRawText(), options);
+                    }
                 }
             }
 
-            // Fallback to Location if CheckType is missing
-            var defaultLoc = new Location();
-            serializer.Populate(jObject.CreateReader(), defaultLoc);
-            return defaultLoc;
+            // Fallback: default to Location
+            return JsonSerializer.Deserialize<Location>(root.GetRawText(), options);
         }
-        public override void WriteJson(JsonWriter writer, ILocation value, JsonSerializer serializer)
+
+        public override void Write(Utf8JsonWriter writer, ILocation value, JsonSerializerOptions options)
         {
             switch (value)
             {
                 case CompositeLocation composite:
-                    serializer.Serialize(writer, composite);
+                    JsonSerializer.Serialize(writer, composite, options);
                     break;
                 case Location location:
-                    serializer.Serialize(writer, location);
+                    JsonSerializer.Serialize(writer, location, options);
                     break;
                 default:
-                    throw new JsonSerializationException($"Unexpected ILocation type: {value.GetType()}");
+                    throw new JsonException($"Unexpected ILocation type: {value.GetType()}");
             }
         }
     }
-        
-    
+
+
 }

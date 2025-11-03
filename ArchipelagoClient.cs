@@ -11,8 +11,6 @@ using Archipelago.MultiClient.Net.Helpers;
 using Archipelago.MultiClient.Net.MessageLog.Messages;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Packets;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using Serilog;
 using System.Drawing.Text;
 using System.Text.Json;

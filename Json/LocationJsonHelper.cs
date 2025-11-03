@@ -1,9 +1,9 @@
 ﻿using Archipelago.Core.Models;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace Archipelago.Core.Json
@@ -12,39 +12,41 @@ namespace Archipelago.Core.Json
     {
         private static LocationJsonHelper _instance;
         public static LocationJsonHelper Instance => _instance ??= new LocationJsonHelper();
-        private readonly JsonSerializerSettings _settings = new JsonSerializerSettings()
-        {
-            Converters = { new LocationConverter() },
-            Formatting = Formatting.Indented 
-        };
+
+        private readonly JsonSerializerOptions _options;
 
         public LocationJsonHelper()
         {
+            _options = new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Converters = { new LocationConverter() }
+            };
         }
 
         public string SerializeLocation(ILocation location)
         {
-            return JsonConvert.SerializeObject(location, _settings);
+            return JsonSerializer.Serialize(location, _options);
         }
 
         public string SerializeLocations(List<ILocation> locations)
         {
-            return JsonConvert.SerializeObject(locations, _settings);
+            return JsonSerializer.Serialize(locations, _options);
         }
 
         public ILocation DeserializeLocation(string json)
         {
-            return JsonConvert.DeserializeObject<ILocation>(json, _settings);
+            return JsonSerializer.Deserialize<ILocation>(json, _options);
         }
 
         public T DeserializeLocation<T>(string json) where T : ILocation
         {
-            return JsonConvert.DeserializeObject<T>(json, _settings);
+            return JsonSerializer.Deserialize<T>(json, _options);
         }
 
         public List<ILocation> DeserializeLocations(string json)
         {
-            return JsonConvert.DeserializeObject<List<ILocation>>(json, _settings);
+            return JsonSerializer.Deserialize<List<ILocation>>(json, _options);
         }
     }
 }

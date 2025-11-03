@@ -3,7 +3,6 @@ using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Packets;
-using Newtonsoft.Json.Linq;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -87,13 +86,13 @@ namespace Archipelago.Core.Helpers
             {
                 Key = $"{_gameName}_{_slot}_{_seed}_{key}",
                 WantReply = true,
-                DefaultValue = JObject.FromObject(new Dictionary<string, object>()),
+                DefaultValue = Newtonsoft.Json.Linq.JObject.FromObject(new Dictionary<string, object>()),
                 Operations = new[]
                 {
                     new OperationSpecification()
                     {
                         OperationType = OperationType.Replace,
-                        Value = JToken.FromObject(new Dictionary<string, object> { { key, value } })
+                        Value = Newtonsoft.Json.Linq.JToken.FromObject(new Dictionary<string, object> { { key, value } })
                     }
                 }
             };

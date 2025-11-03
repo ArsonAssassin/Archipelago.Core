@@ -1,32 +1,29 @@
-﻿using Newtonsoft.Json;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace Archipelago.Core.Json
 {
-    public class HexToUIntConverter : JsonConverter
+    public class HexToUIntConverter : JsonConverter<uint>
     {
-        public override bool CanConvert(Type objectType)
+        public override uint Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
-            return objectType == typeof(uint);
-        }
-
-        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
-        {
-            var value = reader.Value?.ToString();
-            if (value != null && value.StartsWith("0x"))
+            var value = reader.GetString();
+            if (value != null && value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
             {
                 return Convert.ToUInt32(value, 16);
             }
+
             return Convert.ToUInt32(value);
         }
 
-        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+        public override void Write(Utf8JsonWriter writer, uint value, JsonSerializerOptions options)
         {
-            writer.WriteValue(value);
+            writer.WriteStringValue(value.ToString());
         }
     }
 }

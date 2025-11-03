@@ -4,13 +4,12 @@ using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Packets;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace Archipelago.Core.Helpers
@@ -147,13 +146,13 @@ namespace Archipelago.Core.Helpers
             {
                 Key = BuildStorageKey(key),
                 WantReply = true,
-                DefaultValue = JObject.FromObject(new Dictionary<string, object>()),
+                DefaultValue = Newtonsoft.Json.Linq.JObject.FromObject(new Dictionary<string, object>()),
                 Operations = new[]
                 {
                     new OperationSpecification()
                     {
                         OperationType = OperationType.Replace,
-                        Value = JToken.FromObject(new Dictionary<string, object> { { key, value } })
+                        Value = Newtonsoft.Json.Linq.JToken.FromObject(new Dictionary<string, object> { { key, value } })
                     }
                 }
             };
@@ -167,11 +166,14 @@ namespace Archipelago.Core.Helpers
                 var data = await dataStorage.GetAsync<Dictionary<string, object>>();
                 var value = data[key];
 
-                var result = JsonConvert.DeserializeObject<T>(value.ToString(), new JsonSerializerSettings()
+                var options = new JsonSerializerOptions
                 {
-                    Converters = { new LocationConverter() },
-                    Formatting = Formatting.Indented
-                });
+                    WriteIndented = true,
+                    Converters = { new LocationConverter() }
+                };
+
+                var json = value.ToString();
+                var result = JsonSerializer.Deserialize<T>(json!, options);
 
                 Log.Verbose($"Loaded {key} from data storage");
                 return (true, result);
