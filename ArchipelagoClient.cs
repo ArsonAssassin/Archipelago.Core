@@ -1,4 +1,5 @@
-﻿using Archipelago.Core.Json;
+﻿using Archipelago.Core.Helpers;
+using Archipelago.Core.Json;
 using Archipelago.Core.Models;
 using Archipelago.Core.Util;
 using Archipelago.Core.Util.GPS;
@@ -23,9 +24,8 @@ namespace Archipelago.Core
     public class ArchipelagoClient : IDisposable
     {
         private readonly Timer _gameClientPollTimer;
-        private DateTime _lastSaveTime = DateTime.MinValue;
-        private readonly SemaphoreSlim _saveSemaphore = new SemaphoreSlim(1, 1);
-        private const int SAVE_THROTTLE_SECONDS = 10;
+        private GameStateManager? _gameStateManager;
+        private GPSStateManager? _gpsStateManager;
         public bool IsConnected { get; set; }
         public bool IsLoggedIn { get; set; }
         public event EventHandler<ItemReceivedEventArgs>? ItemReceived;
@@ -46,21 +46,12 @@ namespace Archipelago.Core
         private const int WORKER_COUNT = 8;
         public GPSHandler GPSHandler
         {
-            get => _gpsHandler;
+            get => _gpsStateManager?.Handler;
             set
             {
-                if (_gpsHandler != null)
+                if (_gpsStateManager != null)
                 {
-                    _gpsHandler.PositionChanged -= _gpsHandler_PositionChanged;
-                    _gpsHandler.MapChanged -= _gpsHandler_MapChanged;
-                }
-
-                _gpsHandler = value;
-
-                if (_gpsHandler != null)
-                {
-                    _gpsHandler.PositionChanged += _gpsHandler_PositionChanged;
-                    _gpsHandler.MapChanged += _gpsHandler_MapChanged;
+                    _gpsStateManager.Handler = value;
                 }
             }
         }
@@ -69,13 +60,13 @@ namespace Archipelago.Core
         private string Seed { get; set; } = "";
         private Dictionary<string, object> _options = [];
         public Dictionary<string, object> Options { get { return _options; } }
-        public GameState GameState { get; set; }
-        public Dictionary<string, object> CustomValues { get; set; }
+        public GameState GameState => _gameStateManager?.CurrentState;
+        public Dictionary<string, object> CustomValues => _gameStateManager?.CustomValues ?? new Dictionary<string, object>();
+
         private IOverlayService? OverlayService { get; set; }
 
         private readonly SemaphoreSlim _receiveItemSemaphore = new SemaphoreSlim(1, 1);
         private bool isOverlayEnabled = false;
-        private GPSHandler _gpsHandler;
         private const int BATCH_SIZE = 25;
         private IGameClient _gameClient;
 
@@ -91,75 +82,26 @@ namespace Archipelago.Core
         public async Task SaveGameStateAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken = CombineTokens(cancellationToken);
-            if (CurrentSession == null || GameState == null) return;
 
-            var timeSinceLastSave = DateTime.UtcNow - _lastSaveTime;
-            if (timeSinceLastSave < TimeSpan.FromSeconds(SAVE_THROTTLE_SECONDS))
+            if (_gameStateManager == null)
             {
-                Log.Verbose($"Save throttled - last save was {timeSinceLastSave.TotalSeconds:F1}s ago (minimum {SAVE_THROTTLE_SECONDS}s)");
+                Log.Warning("GameStateManager not initialized");
                 return;
             }
 
-            if (!await _saveSemaphore.WaitAsync(0, cancellationToken))
-            {
-                Log.Verbose("Save already in progress, skipping");
-                return;
-            }
-
-            try
-            {
-                Log.Debug("Saving game state");
-
-                await CurrentSession.Socket.SendPacketAsync(CreateSetPacket("GameState", GameState));
-                await CurrentSession.Socket.SendPacketAsync(CreateSetPacket("CustomValues", CustomValues));
-
-                _lastSaveTime = DateTime.UtcNow;
-                Log.Debug("Save completed");
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Failed to save to datastorage: {ex.Message}");
-            }
-            finally
-            {
-                _saveSemaphore.Release();
-            }
+            await _gameStateManager.SaveAsync(cancellationToken);
         }
         public async Task LoadGameStateAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken = CombineTokens(cancellationToken);
-            Log.Verbose("Loading game state");
 
-            try
+            if (_gameStateManager == null)
             {
-                (bool success, GameState data) = await DeserializeFromDataStorageAsync<GameState>("GameState");
-                if (success)
-                {
-                    GameState = data;
-                    Log.Verbose($"Loaded GameState with {GameState.ReceivedItems.Count} items, LastCheckedIndex: {GameState.LastCheckedIndex}");
-                }
-                else
-                {
-                    Log.Warning("No existing GameState found - creating new GameState");
-                    GameState = new GameState() { LastCheckedIndex = 0 };
-                }
+                Log.Warning("GameStateManager not initialized");
+                return;
+            }
 
-                (bool success2, Dictionary<string, object> data2) = await GetFromDataStorageAsync<Dictionary<string, object>>("CustomValues");
-                if (success2)
-                {
-                    CustomValues = data2;
-                }
-                else
-                {
-                    CustomValues = new Dictionary<string, object>();
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Error loading GameState: {ex.Message}");
-                GameState = new GameState() { LastCheckedIndex = 0 };
-                CustomValues = new Dictionary<string, object>();
-            }
+            await _gameStateManager.LoadAsync(cancellationToken);
         }
         private void PeriodicGameClientConnectionCheck(object? state)
         {
@@ -225,10 +167,11 @@ namespace Archipelago.Core
                 CurrentSession.MessageLog.OnMessageReceived -= HandleMessageReceived;
                 CurrentSession.Items.ItemReceived -= ItemReceivedHandler;
                 CancelMonitors();
-                GameState = null;
+                _gpsStateManager?.Dispose();
+                _gpsStateManager = null;
+                _gameStateManager = null;
                 CurrentSession = null;
             }
-            _lastSaveTime = DateTime.MinValue;
             IsConnected = false;
             IsLoggedIn = false;
             Disconnected?.Invoke(this, new ConnectionChangedEventArgs(false));
@@ -269,12 +212,10 @@ namespace Archipelago.Core
             {
                 Log.Warning("No options found.");
             }
-
+            _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot);
+            _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
             await LoadGameStateAsync(cancellationToken);
-            if (CustomValues == null)
-            {
-                CustomValues = new Dictionary<string, object>();
-            }
+
             itemsReceivedCurrentSession = 0;
 
             IsLoggedIn = true;
@@ -591,93 +532,19 @@ namespace Archipelago.Core
 
         }
 
-        private void _gpsHandler_MapChanged(object? sender, MapChangedEventArgs e)
-        {
-            SaveGPSAsync();
-        }
-
-        private void _gpsHandler_PositionChanged(object? sender, PositionChangedEventArgs e)
-        {
-            SaveGPSAsync();
-        }
         public async Task SaveGPSAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken = CombineTokens(cancellationToken);
-            if (CurrentSession == null || GameState == null) return;
 
-            try
+            if (_gpsStateManager == null)
             {
-                Log.Debug($"Saving gps state");
-                await CurrentSession.Socket.SendPacketAsync(CreateSetPacket("GPS", _gpsHandler.GetCurrentPosition()));
+                Log.Warning("GPSStateManager not initialized");
+                return;
+            }
 
-            }
-            catch (Exception ex)
-            {
-                Log.Logger.Error("Failed to save to datastorage");
-            }
-        }
-        private SetPacket CreateSetPacket<T>(string key, T value)
-        {
-            return new SetPacket()
-            {
-                Key = $"{GameName}_{CurrentSession.ConnectionInfo.Slot}_{Seed}_{key}",
-                WantReply = true,
-                DefaultValue = JObject.FromObject(new Dictionary<string, object>()),
-                Operations = new[] {
-                        new OperationSpecification()
-                        {
-                            OperationType = OperationType.Replace,
-                            Value = JToken.FromObject(new Dictionary<string, object>{ { key, value } })
-                        }
-                    }
-            };
+            await _gpsStateManager.SaveAsync(cancellationToken);
         }
 
-
-        public async Task<(bool Success, T? Result)> DeserializeFromDataStorageAsync<T>(string key)
-        {
-            try
-            {
-                var dataStorage = CurrentSession.DataStorage[$"{GameName}_{CurrentSession.ConnectionInfo.Slot}_{Seed}_{key}"];
-                var foo = await dataStorage.GetAsync<Dictionary<string, object>>();
-                object bar = foo[key];
-                var type = JsonConvert.DeserializeObject<T>(bar.ToString(), new JsonSerializerSettings()
-                {
-                    Converters = { new LocationConverter() },
-                    Formatting = Formatting.Indented
-                });
-
-                Log.Logger.Verbose($"Loaded {key} from datastorage");
-                return (true, type);
-            }
-            catch (Exception ex)
-            {
-                Log.Logger.Debug($"Failed to load {key} from datastorage: {ex.Message}");
-                return (false, default(T?));
-            }
-        }
-        public async Task<(bool Success, T? Result)> GetFromDataStorageAsync<T>(string key)
-        {
-            try
-            {
-                var dataStorage = CurrentSession.DataStorage[$"{GameName}_{CurrentSession.ConnectionInfo.Slot}_{Seed}_{key}"];
-                var foo = await dataStorage.GetAsync<Dictionary<string, T>>();
-                var bar = foo[key];
-
-                if (bar is T correctType)
-                {
-                    Log.Logger.Verbose($"Loaded {key} from datastorage");
-                    return (true, correctType);
-                }
-
-                return (false, default(T?));
-            }
-            catch (Exception ex)
-            {
-                Log.Logger.Debug($"Failed to load {key} from datastorage: {ex.Message}");
-                return (false, default(T?));
-            }
-        }
         private CancellationToken CombineTokens(CancellationToken externalToken)
         {
             if (externalToken == default || externalToken == CancellationToken.None)
@@ -690,11 +557,17 @@ namespace Archipelago.Core
                 externalToken
             ).Token;
         }
-        public async void ForceReloadAllItems()
+        public async Task ForceReloadAllItems(CancellationToken cancellationToken = default)
         {
-            GameState.ReceivedItems = new List<Item>();
-            GameState.LastCheckedIndex = 0;
-            await SaveGameStateAsync();
+            if (_gameStateManager?.CurrentState == null)
+            {
+                Log.Warning("Cannot reload items - GameState is null");
+                return;
+            }
+
+            _gameStateManager.CurrentState.ReceivedItems = new List<Item>();
+            _gameStateManager.CurrentState.LastCheckedIndex = 0;
+            await _gameStateManager.ForceSaveAsync(cancellationToken);
         }
         public DeathLinkService EnableDeathLink()
         {
@@ -727,6 +600,7 @@ namespace Archipelago.Core
             }
             _gameClientPollTimer?.Dispose();
             _receiveItemSemaphore?.Dispose();
+            _gpsStateManager?.Dispose();
             OverlayService?.Hide();
             OverlayService?.Dispose();
             _monitorToken?.Dispose();
