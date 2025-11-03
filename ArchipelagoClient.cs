@@ -396,7 +396,7 @@ namespace Archipelago.Core
                     {
                         if (_monitorToken.IsCancellationRequested) break;
 
-                        if (EnableLocationsCondition?.Invoke() ?? false)
+                        if (EnableLocationsCondition?.Invoke() ?? true)
                         {
                             try
                             {
@@ -404,7 +404,6 @@ namespace Archipelago.Core
                                 {
                                     SendLocation(location, _monitorToken.Token);
                                     Log.Verbose($"[Worker {workerId}] {location.Name} ({location.Id}) Completed");
-                                    await RemoveLocationAsync(location);
                                 }
                                 else
                                 {
@@ -431,7 +430,7 @@ namespace Archipelago.Core
                         await _locationsChannel.Writer.WriteAsync(location, _monitorToken.Token);
                     }
 
-                    await Task.Delay(500, _monitorToken.Token);
+                    await Task.Delay(50, _monitorToken.Token);
                 }
                 catch (OperationCanceledException)
                 {
