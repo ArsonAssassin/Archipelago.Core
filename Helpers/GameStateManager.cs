@@ -189,6 +189,11 @@ namespace Archipelago.Core.Helpers
             {
                 var dataStorage = _session.DataStorage[BuildStorageKey(key)];
                 var data = await dataStorage.GetAsync<Dictionary<string, T>>();
+                if (data is null)
+                {
+                    Log.Debug($"Failed to load {key} from data storage");
+                    return (false, default);
+                }
                 var value = data[key];
 
                 if (value is T correctType)

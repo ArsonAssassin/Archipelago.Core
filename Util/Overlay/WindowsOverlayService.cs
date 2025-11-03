@@ -201,6 +201,7 @@ namespace Archipelago.Core.Util.Overlay
                     originalColor.B,
                     originalColor.A * popup.Opacity
                 );
+                
                 e.Graphics.DrawText(_selectedFont, popup.Brush, _xOffset, _yOffset - (index * (_fontSize + 3)), popup.Text);
                 _brush.Color = originalColor;
                 index++;
