@@ -33,6 +33,7 @@ namespace Archipelago.Core
         public event EventHandler<LocationCompletedEventArgs>? LocationCompleted;
         public event EventHandler? GameDisconnected;
         public Func<bool>? EnableLocationsCondition;
+        public ItemsHandlingFlags itemsFlags { get; set; } = ItemsHandlingFlags.AllItems;
         public int itemsReceivedCurrentSession { get; set; }
         public bool isReadyToReceiveItems { get; set; }
         public ArchipelagoSession CurrentSession { get; set; }
@@ -184,7 +185,7 @@ namespace Archipelago.Core
                 Log.Error("Must be connected to the server to log in.  Please ensure your host is correct.");
                 return;
             }
-            var loginResult = await CurrentSession.LoginAsync(GameName, playerName, ItemsHandlingFlags.AllItems, Version.Parse("0.6.1"), password: password, requestSlotData: true);
+            var loginResult = await CurrentSession.LoginAsync(GameName, playerName, itemsFlags, Version.Parse("0.6.1"), password: password, requestSlotData: true);
             Log.Verbose($"Login Result: {(loginResult.Successful ? "Success" : "Failed")}");
             if (loginResult.Successful)
             {
