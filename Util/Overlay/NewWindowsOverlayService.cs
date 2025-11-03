@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace Archipelago.Core.Util.Overlay
 {
-    public class SilkOverlayService : IOverlayService
+    public class OverlayService : IOverlayService
     {
         private IWindow? _window;
         private GL? _gl;
@@ -34,12 +34,12 @@ namespace Archipelago.Core.Util.Overlay
         private Vector4 _defaultTextColor;
         private uint _frameCounter = 0;
 
-        public SilkOverlayService(OverlayOptions options = null)
+        public OverlayService(OverlayOptions options = null)
         {
             if (options != null)
             {
                 if (options.FontSize != 0) _fontSize = options.FontSize;
-                if (options.TextColor != null) _textColor = options.TextColor;
+                if (options.DefaultTextColor != null) _textColor = options.DefaultTextColor;
                 _xOffset = options.XOffset;
                 _yOffset = options.YOffset;
                 _fadeDuration = options.FadeDuration;

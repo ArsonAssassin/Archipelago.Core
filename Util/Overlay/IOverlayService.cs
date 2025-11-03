@@ -1,5 +1,4 @@
 ﻿using Archipelago.MultiClient.Net.Models;
-using GameOverlay.Drawing;
 using System;
 using System.Collections.Generic;
 using System.Linq;

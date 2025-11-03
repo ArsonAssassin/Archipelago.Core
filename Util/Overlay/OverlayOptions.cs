@@ -9,9 +9,8 @@ namespace Archipelago.Core.Util.Overlay
 {
     public class OverlayOptions
     {
-        public IColor TextColor { get; set; }
+        public IColor DefaultTextColor { get; set; }
         public float FontSize { get; set; }
-        public Font Font { get; set; }
         public float XOffset { get; set; } = 100;
         public float YOffset { get; set; } = 100;
         public float FadeDuration = 10.0f;

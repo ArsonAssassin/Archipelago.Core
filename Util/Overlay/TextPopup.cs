@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using GameOverlay.Drawing;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -18,8 +17,6 @@ namespace Archipelago.Core.Util.Overlay
     public class TextPopup : Popup
     {
         public string Text { get; set; }
-        public GameOverlay.Drawing.Font Font { get; set; }
-        public SolidBrush Brush { get; set; }
     }
     public class RichTextPopup : Popup
     {
