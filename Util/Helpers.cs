@@ -57,7 +57,7 @@ namespace Archipelago.Core.Util
             return jsonFile;
         }
 
-        internal static bool CheckLocation(Location location)
+        public static bool CheckLocation(Location location)
         {
             switch (location.CheckType)
             {
