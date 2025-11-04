@@ -33,7 +33,7 @@ namespace Archipelago.Core
         public event EventHandler<LocationCompletedEventArgs>? LocationCompleted;
         public event EventHandler? GameDisconnected;
         public Func<bool>? EnableLocationsCondition;
-        public ItemsHandlingFlags itemsFlags { get; set; } = ItemsHandlingFlags.AllItems;
+        public ItemsHandlingFlags? itemsFlags { get; set; }
         public int itemsReceivedCurrentSession { get; set; }
         public bool isReadyToReceiveItems { get; set; }
         public ArchipelagoSession CurrentSession { get; set; }
@@ -177,7 +177,7 @@ namespace Archipelago.Core
             Log.Information($"Disconnected");
         }
 
-        public async Task Login(string playerName, string password = null, CancellationToken cancellationToken = default)
+        public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default)
         {
             cancellationToken = CombineTokens(cancellationToken);
             if (!IsConnected)
@@ -185,7 +185,11 @@ namespace Archipelago.Core
                 Log.Error("Must be connected to the server to log in.  Please ensure your host is correct.");
                 return;
             }
-            var loginResult = await CurrentSession.LoginAsync(GameName, playerName, itemsFlags, Version.Parse("0.6.1"), password: password, requestSlotData: true);
+            if(itemsHandlingFlags != null)
+            {
+                itemsFlags = itemsHandlingFlags;
+            }
+            var loginResult = await CurrentSession.LoginAsync(GameName, playerName, itemsHandlingFlags ?? ItemsHandlingFlags.AllItems, Version.Parse("0.6.2"), password: password, requestSlotData: true);
             Log.Verbose($"Login Result: {(loginResult.Successful ? "Success" : "Failed")}");
             if (loginResult.Successful)
             {
