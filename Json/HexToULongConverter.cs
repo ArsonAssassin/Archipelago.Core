@@ -13,12 +13,21 @@ namespace Archipelago.Core.Json
     {
         public override ulong Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
-            var value = reader.GetString();
-            if (value != null && value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            if (reader.TokenType == JsonTokenType.Number)
             {
-                return Convert.ToUInt64(value, 16);
+                return reader.GetUInt64();
             }
-            return Convert.ToUInt64(value);
+            else if (reader.TokenType == JsonTokenType.String)
+            {
+                var value = reader.GetString();
+                if (value != null && value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Convert.ToUInt64(value, 16);
+                }
+                return Convert.ToUInt64(value);
+            }
+
+            throw new JsonException($"Unexpected token type: {reader.TokenType}");
         }
 
         public override void Write(Utf8JsonWriter writer, ulong value, JsonSerializerOptions options)

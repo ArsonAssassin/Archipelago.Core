@@ -41,7 +41,7 @@ namespace Archipelago.Core.Util.Overlay
         {
             _gl = gl;
             _view = view;
-            _input = input;
+            _input = input; // Can be null now
             _windowWidth = view.Size.X;
             _windowHeight = view.Size.Y;
 
@@ -49,7 +49,9 @@ namespace Archipelago.Core.Util.Overlay
             ImGui.SetCurrentContext(context);
 
             var io = ImGui.GetIO();
+            
             io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
+            io.ConfigFlags = ImGuiConfigFlags.NoMouse | ImGuiConfigFlags.NoKeyboard;
 
             CreateDeviceResources();
             SetPerFrameImGuiData(1f / 60f);
@@ -66,7 +68,6 @@ namespace Archipelago.Core.Util.Overlay
             }
 
             SetPerFrameImGuiData(deltaSeconds);
-            UpdateImGuiInput();
 
             _frameBegun = true;
             ImGui.NewFrame();
@@ -93,29 +94,6 @@ namespace Archipelago.Core.Util.Overlay
             }
 
             io.DeltaTime = deltaSeconds;
-        }
-
-        private void UpdateImGuiInput()
-        {
-            var io = ImGui.GetIO();
-
-            var mouseState = _input.Mice.Count > 0 ? _input.Mice[0] : null;
-            var keyboardState = _input.Keyboards.Count > 0 ? _input.Keyboards[0] : null;
-
-            if (mouseState != null)
-            {
-                io.MousePos = new Vector2(mouseState.Position.X, mouseState.Position.Y);
-                io.MouseDown[0] = mouseState.IsButtonPressed(Silk.NET.Input.MouseButton.Left);
-                io.MouseDown[1] = mouseState.IsButtonPressed(Silk.NET.Input.MouseButton.Right);
-                io.MouseDown[2] = mouseState.IsButtonPressed(Silk.NET.Input.MouseButton.Middle);
-            }
-
-            foreach (var key in Enum.GetValues<ImGuiKey>())
-            {
-                if (key == ImGuiKey.None)
-                    continue;
-                io.AddKeyEvent(key, false);
-            }
         }
 
         private void CreateDeviceResources()

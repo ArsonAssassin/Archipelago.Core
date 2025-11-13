@@ -22,17 +22,35 @@ namespace Archipelago.Core.Json
             // Detect the CheckType property
             if (root.TryGetProperty("CheckType", out var checkTypeElement))
             {
-                // Try to parse the CheckType enum
-                if (Enum.TryParse<LocationCheckType>(checkTypeElement.GetString(), out var checkType))
+                LocationCheckType checkType;
+
+                // Handle both string and number representations
+                if (checkTypeElement.ValueKind == JsonValueKind.Number)
                 {
-                    if (checkType == LocationCheckType.AND || checkType == LocationCheckType.OR)
+                    checkType = (LocationCheckType)checkTypeElement.GetInt32();
+                }
+                else if (checkTypeElement.ValueKind == JsonValueKind.String)
+                {
+                    if (!Enum.TryParse<LocationCheckType>(checkTypeElement.GetString(), out checkType))
                     {
-                        return JsonSerializer.Deserialize<CompositeLocation>(root.GetRawText(), options);
-                    }
-                    else
-                    {
+                        // Fallback if parse fails
                         return JsonSerializer.Deserialize<Location>(root.GetRawText(), options);
                     }
+                }
+                else
+                {
+                    // Fallback for unexpected types
+                    return JsonSerializer.Deserialize<Location>(root.GetRawText(), options);
+                }
+
+                // Determine which type to deserialize based on CheckType
+                if (checkType == LocationCheckType.AND || checkType == LocationCheckType.OR)
+                {
+                    return JsonSerializer.Deserialize<CompositeLocation>(root.GetRawText(), options);
+                }
+                else
+                {
+                    return JsonSerializer.Deserialize<Location>(root.GetRawText(), options);
                 }
             }
 

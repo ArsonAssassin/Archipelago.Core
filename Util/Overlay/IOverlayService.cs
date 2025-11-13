@@ -10,9 +10,8 @@ namespace Archipelago.Core.Util.Overlay
     public interface IOverlayService : IDisposable
     {
         bool AttachToWindow(IntPtr targetWindowHandle);
-        void Show();
-        void Hide();
         void AddTextPopup(string text);
-       
+        void AddRichTextPopup(List<ColoredTextSpan> spans);
+
     }
 }

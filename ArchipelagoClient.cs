@@ -17,6 +17,7 @@ using System.Drawing.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
+using Color = Archipelago.Core.Util.Overlay.Color;
 
 namespace Archipelago.Core
 {
@@ -71,6 +72,7 @@ namespace Archipelago.Core
         private IGameClient _gameClient;
 
         private CancellationTokenSource _cancellationTokenSource { get; set; } = new CancellationTokenSource();
+        private readonly List<CancellationTokenSource> _linkedTokenSources = new();
         public ArchipelagoClient(IGameClient gameClient)
         {
             Memory.CurrentProcId = gameClient.ProcId;
@@ -118,7 +120,6 @@ namespace Archipelago.Core
         {
             OverlayService = overlayService;
             OverlayService.AttachToWindow(Memory.GetCurrentProcess().MainWindowHandle);
-            OverlayService.Show();
             isOverlayEnabled = true;
         }
         public async Task Connect(string host, string gameName, CancellationToken cancellationToken = default)
@@ -476,6 +477,23 @@ namespace Archipelago.Core
                 OverlayService.AddTextPopup(message);
             }
         }
+        public void AddRichOverlayMessage(LogMessage message, CancellationToken cancellationToken = default)
+        {
+            if (isOverlayEnabled)
+            {
+                cancellationToken = CombineTokens(cancellationToken);
+                var spans = new List<ColoredTextSpan>();
+                foreach (var part in message.Parts)
+                {
+                    spans.Add(new ColoredTextSpan()
+                    {
+                        Text = part.Text,
+                        Color = new Util.Overlay.Color(part.Color.R, part.Color.G, part.Color.B)
+                    });
+                }
+                OverlayService.AddRichTextPopup(spans);
+            }
+        }
         [Obsolete]
         private async Task MonitorBatch(List<ILocation> batch, CancellationToken token)
         {
@@ -555,10 +573,17 @@ namespace Archipelago.Core
                 return _cancellationTokenSource.Token;
             }
 
-            return CancellationTokenSource.CreateLinkedTokenSource(
+            var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(
                 _cancellationTokenSource.Token,
                 externalToken
-            ).Token;
+            );
+
+            lock (_linkedTokenSources)
+            {
+                _linkedTokenSources.Add(linkedSource);
+            }
+
+            return linkedSource.Token;
         }
         public async Task ForceReloadAllItems(CancellationToken cancellationToken = default)
         {
@@ -604,10 +629,19 @@ namespace Archipelago.Core
             _gameClientPollTimer?.Dispose();
             _receiveItemSemaphore?.Dispose();
             _gpsStateManager?.Dispose();
-            OverlayService?.Hide();
             OverlayService?.Dispose();
             _monitorToken?.Dispose();
             _cancellationTokenSource?.Dispose();
+
+            // Dispose all linked token sources
+            lock (_linkedTokenSources)
+            {
+                foreach (var source in _linkedTokenSources)
+                {
+                    source?.Dispose();
+                }
+                _linkedTokenSources.Clear();
+            }
 
         }
 
