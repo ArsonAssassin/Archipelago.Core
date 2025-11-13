@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -10,12 +11,12 @@ namespace Archipelago.Core.Models
     {
         public GameState()
         {
-            CompletedLocations = new List<ILocation>();
-            ReceivedItems = new List<Item>();
+            CompletedLocations = new ConcurrentQueue<ILocation>();
+            ReceivedItems = new ConcurrentQueue<Item>();
         }
         
-        public List<ILocation> CompletedLocations { get; set; }
-        public List<Item> ReceivedItems { get; set; }
+        public ConcurrentQueue<ILocation> CompletedLocations { get; set; }
+        public ConcurrentQueue<Item> ReceivedItems { get; set; }
         public int LastCheckedIndex { get; set; }
     }
 }
