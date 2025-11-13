@@ -16,7 +16,7 @@ using System.Timers;
 
 namespace Archipelago.Core.Util.Overlay
 {
-    public class OverlayService : IOverlayService
+    public class WindowsOverlayService : IOverlayService
     {
         private IWindow? _window;
         private GL? _gl;
@@ -35,7 +35,7 @@ namespace Archipelago.Core.Util.Overlay
         private float _fadeDuration = 10.0f;
 
         private System.Timers.Timer? _windowMonitorTimer;
-        public OverlayService(OverlayOptions options = null)
+        public WindowsOverlayService(OverlayOptions options = null)
         {
             if (options != null)
             {
