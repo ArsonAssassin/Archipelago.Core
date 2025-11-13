@@ -12,6 +12,7 @@ using Archipelago.MultiClient.Net.MessageLog.Messages;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Packets;
 using Serilog;
+using System.Collections.Concurrent;
 using System.Drawing.Text;
 using System.Text.Json;
 using System.Threading;
@@ -293,7 +294,7 @@ namespace Archipelago.Core
                             Name = newItemInfo.ItemName,
                         };
                         Log.Debug($"Adding new item {item.Name}");
-                        GameState.ReceivedItems.Add(item);
+                        GameState.ReceivedItems.Enqueue(item);
                         GameState.LastCheckedIndex = itemsReceivedCurrentSession;
                         receivedNewItems = true;
                         ItemReceived?.Invoke(this, new ItemReceivedEventArgs() { Item = item });
@@ -528,7 +529,7 @@ namespace Archipelago.Core
             Log.Debug($"Marking location {location.Id} as complete");
 
             await CurrentSession.Locations.CompleteLocationChecksAsync([(long)location.Id]);
-            GameState.CompletedLocations.Add(location);
+            GameState.CompletedLocations.Enqueue(location);
             await SaveGameStateAsync(cancellationToken);
             LocationCompleted?.Invoke(this, new LocationCompletedEventArgs(location));
 
@@ -567,7 +568,7 @@ namespace Archipelago.Core
                 return;
             }
 
-            _gameStateManager.CurrentState.ReceivedItems = new List<Item>();
+            _gameStateManager.CurrentState.ReceivedItems = new ConcurrentQueue<Item>();
             _gameStateManager.CurrentState.LastCheckedIndex = 0;
             await _gameStateManager.ForceSaveAsync(cancellationToken);
         }
