@@ -545,6 +545,11 @@ namespace Archipelago.Core
                 return;
             }
             Log.Debug($"Marking location {location.Id} as complete");
+            if (GameState.CompletedLocations.Any((x) => x.Id == location.Id))
+            {
+                Log.Debug($"Skipping location {location.Name} - already completed.");
+                return;
+            }
 
             await CurrentSession.Locations.CompleteLocationChecksAsync([(long)location.Id]);
             GameState.CompletedLocations.Enqueue(location);
