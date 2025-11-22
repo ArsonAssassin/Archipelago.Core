@@ -283,7 +283,7 @@ namespace Archipelago.Core
                 await LoadGameStateAsync(cancellationToken);
 
                 bool receivedNewItems = false;
-                var newItemInfo = CurrentSession.Items.DequeueItem();
+                ItemInfo newItemInfo = CurrentSession.Items.DequeueItem();
                 while (newItemInfo != null)
                 {
                     itemsReceivedCurrentSession++;
@@ -298,7 +298,11 @@ namespace Archipelago.Core
                         GameState.ReceivedItems.Enqueue(item);
                         GameState.LastCheckedIndex = itemsReceivedCurrentSession;
                         receivedNewItems = true;
-                        ItemReceived?.Invoke(this, new ItemReceivedEventArgs() { Item = item });
+                        ItemReceived?.Invoke(this, new ItemReceivedEventArgs() { 
+                            Item = item, 
+                            LocationId = newItemInfo.LocationId,
+                            Player = newItemInfo.Player
+                        });
                     }
                     else
                     {
