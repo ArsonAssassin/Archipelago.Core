@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using Serilog;
 using static Archipelago.Core.Util.Enums;
 
 namespace Archipelago.Core.Util
@@ -131,7 +132,7 @@ namespace Archipelago.Core.Util
                     break;
                 if (GetLastError() != 0)
                 {
-                    Console.WriteLine("Could not find suitable Address");
+                    Log.Logger.Warning("Could not find suitable Address");
                 }
                 if ((MemoryState)mbi.State == MemoryState.Free && (long)mbi.RegionSize >= size)
                 {
@@ -217,12 +218,19 @@ namespace Archipelago.Core.Util
             IntPtr thread = CreateRemoteThread_Win32(processHandle, IntPtr.Zero, 0, address, IntPtr.Zero, 0, IntPtr.Zero);
             if (thread == IntPtr.Zero)
             {
-                Console.WriteLine($"Failed to create remote thread: {GetLastErrorMessage()}");
+                Log.Logger.Error($"Failed to create remote thread: {GetLastErrorMessage()}");
                 return 0;
             }
 
             uint result = WaitForSingleObject_Win32(thread, timeoutSeconds);
-            CloseHandle(thread);
+            if (result == 0xffffffff) // WAIT_FAILED
+            {
+                Log.Logger.Error($"Failed to execute remote thread: {GetLastErrorMessage()}");
+            }
+            if (!CloseHandle(thread)) // close failed
+            {
+                Log.Logger.Warning($"Failed to close handle after execute: {GetLastErrorMessage()}");
+            }
             return result;
         }
 
@@ -231,7 +239,7 @@ namespace Archipelago.Core.Util
             IntPtr address = VirtualAllocEx(processHandle, IntPtr.Zero, (IntPtr)bytes.Length, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
             if (address == IntPtr.Zero)
             {
-                Console.WriteLine($"Failed to allocate memory: {GetLastErrorMessage()}");
+                Log.Logger.Error($"Failed to allocate memory: {GetLastErrorMessage()}");
                 return 0;
             }
 
@@ -239,19 +247,28 @@ namespace Archipelago.Core.Util
             {
                 if (!WriteProcessMemory(processHandle, (ulong)address, bytes, bytes.Length, out nint bytesWritten))
                 {
-                    Console.WriteLine($"Failed to write bytes to memory: {GetLastErrorMessage()}");
-                    VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE);
+                    Log.Logger.Error($"Failed to write bytes to memory: {GetLastErrorMessage()}");
+                    if (!VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE))
+                    {
+                        Log.Logger.Warning($"Failed to free bytes in memory: 1_{GetLastErrorMessage()}");
+                    }
                     return 0;
                 }
 
                 uint result = Execute(processHandle, address, timeoutSeconds);
-                VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE);
+                if (!VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE))
+                {
+                    Log.Logger.Warning($"Failed to free bytes in memory: 2_{GetLastErrorMessage()}");
+                }
                 return result;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error executing command: {ex.Message}");
-                VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE);
+                Log.Logger.Error($"Error executing command: {ex.Message}");
+                if (!VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE))
+                {
+                    Log.Logger.Warning($"Failed to free bytes in memory: 3_{GetLastErrorMessage()}");
+                }
                 return 0;
             }
         }
