@@ -292,15 +292,19 @@ namespace Archipelago.Core
             await _receiveItemSemaphore.WaitAsync(cancellationToken);
             try
             {
-                // enclose the below into just load/save ItemState
+                if (!isReadyToReceiveItems) /* in case it was set false while waiting */
+                {
+                    return; 
+                }
                 await _gameStateManager.LoadItemsAsync(cancellationToken);
 
                 bool receivedNewItems = false;
 
-                ItemInfo newItemInfo = CurrentSession.Items.DequeueItem();
+                ItemInfo newItemInfo = CurrentSession.Items.PeekItem();
                 while (newItemInfo != null)
                 {
                     itemsReceivedCurrentSession++;
+                    bool receiveSuccess = true;
                     if (itemsReceivedCurrentSession > ItemState.LastCheckedIndex)
                     {
                         var item = new Item
@@ -310,21 +314,38 @@ namespace Archipelago.Core
                         };
                         Log.Debug($"Adding new item {item.Name}");
 
-                        ItemState.ReceivedItems.Enqueue(item);
-                        ItemState.LastCheckedIndex = itemsReceivedCurrentSession;
-                        receivedNewItems = true;
-                        ItemReceived?.Invoke(this, new ItemReceivedEventArgs() { 
-                            Item = item, 
+                        var args = new ItemReceivedEventArgs()
+                        {
+                            Item = item,
                             LocationId = newItemInfo.LocationId,
-                            Player = newItemInfo.Player
-                        });
+                            Player = newItemInfo.Player,
+                            Success = true  /* default to true - so game client can set it to false if it fails */
+                        };
+                        ItemReceived?.Invoke(this, args);
+                        receiveSuccess = args.Success;
+
+                        if (receiveSuccess)
+                        {
+                            ItemState.ReceivedItems.Enqueue(item);
+                            ItemState.LastCheckedIndex = itemsReceivedCurrentSession;
+                            receivedNewItems = true;
+                        }
+                        else
+                        {
+                            itemsReceivedCurrentSession--; /* undo the earlier increment */
+                            isReadyToReceiveItems = false;
+                            Log.Verbose($"Unable to receive item: {item.Name}.");
+                            /* Game client knows the item failed to receive, so they can reinitiate it when they want to. */
+                            break; /* leave the dequeueing loop */
+                        }
                     }
                     else
                     {
                         Log.Verbose($"Fast forwarding past previously received item {newItemInfo.ItemName}");
                     }
 
-                    newItemInfo = CurrentSession.Items.DequeueItem();
+                    CurrentSession.Items.DequeueItem();
+                    newItemInfo = CurrentSession.Items.PeekItem();
                 }
 
                 if (receivedNewItems)
@@ -338,6 +359,11 @@ namespace Archipelago.Core
             }
         }
 
+        public async void ReceiveReady()
+        {
+            isReadyToReceiveItems = true;
+            await ReceiveItems();
+        }
         public async Task AddLocationAsync(ILocation location)
         {
 

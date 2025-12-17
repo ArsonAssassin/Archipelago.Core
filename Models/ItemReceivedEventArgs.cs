@@ -12,5 +12,6 @@ namespace Archipelago.Core.Models
         public Item Item { get; set; }
         public long LocationId { get; set; }
         public PlayerInfo Player { get; set; }
+        public bool Success { get; set; }
     }
 }
