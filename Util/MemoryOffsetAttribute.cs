@@ -13,13 +13,15 @@ namespace Archipelago.Core.Util
         public int StringLength { get; }
         public int CollectionLength { get; }
         public int BitPosition { get; }
+        public int ByteArrayLength { get; }
 
-        public MemoryOffsetAttribute(uint offset, int stringLength = 100, int collectionLength = 0, int bitPosition = -1)
+        public MemoryOffsetAttribute(uint offset, int stringLength = 100, int collectionLength = 0, int bitPosition = -1, int byteArrayLength = 0)
         {
             Offset = offset;
             StringLength = stringLength;
             CollectionLength = collectionLength;
             BitPosition = bitPosition;
+            ByteArrayLength = byteArrayLength;
         }
     }
 }

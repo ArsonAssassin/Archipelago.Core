@@ -11,6 +11,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using static Archipelago.Core.Util.Enums;
 
 namespace Archipelago.Core.Util
@@ -129,16 +130,11 @@ namespace Archipelago.Core.Util
             return buffer[0];
         }
 
-        public static byte[] ReadByteArray(ulong address, int length, Endianness endianness = Endianness.Little)
+        public static byte[] ReadByteArray(ulong address, int length)
         {
             if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
             byte[] buffer = new byte[length];
             PlatformImpl.ReadProcessMemory(CurrentHandle(), address + GlobalOffset, buffer, buffer.Length, out _);
-            if (endianness == Endianness.Big && BitConverter.IsLittleEndian ||
-                endianness == Endianness.Little && !BitConverter.IsLittleEndian)
-            {
-                Array.Reverse(buffer);
-            }
             return buffer;
         }
         public static T ReadStruct<T>(ulong address)
@@ -254,7 +250,7 @@ namespace Archipelago.Core.Util
 
         public static string ReadString(ulong address, int length, Endianness endianness = Endianness.Little, Encoding encoding = null)
         {
-            byte[] dataBuffer = ReadByteArray(address, length, endianness);
+            byte[] dataBuffer = ReadByteArray(address, length);
             encoding ??= Encoding.UTF8;
             return encoding.GetString(dataBuffer);
         }
@@ -280,15 +276,24 @@ namespace Archipelago.Core.Util
 
             foreach (var property in properties)
             {
-                var offset = property.GetCustomAttribute<MemoryOffsetAttribute>().Offset;
+                var attribute = property.GetCustomAttribute<MemoryOffsetAttribute>();
+                var offset = attribute.Offset;
                 var address = baseAddress + offset;
 
-                if (property.PropertyType.IsGenericType &&
+                if (property.PropertyType == typeof(byte[]))
+                {
+                    if (attribute.ByteArrayLength <= 0)
+                    {
+                        throw new ArgumentException($"Byte array property {property.Name} must specify a positive ByteArrayLength");
+                    }
+                    var byteArray = ReadByteArray(address, attribute.ByteArrayLength);
+                    property.SetValue(result, byteArray);
+                }
+                else if (property.PropertyType.IsGenericType &&
                     (property.PropertyType.GetGenericTypeDefinition() == typeof(List<>) ||
                      property.PropertyType.GetGenericTypeDefinition() == typeof(IList<>) ||
                      property.PropertyType.GetGenericTypeDefinition() == typeof(ICollection<>)))
                 {
-                    var attribute = property.GetCustomAttribute<MemoryOffsetAttribute>();
                     if (attribute.CollectionLength <= 0)
                     {
                         throw new ArgumentException($"Collection property {property.Name} must specify a positive CollectionLength");
@@ -316,6 +321,13 @@ namespace Archipelago.Core.Util
                     }
 
                     property.SetValue(result, list);
+                }
+                else if (property.PropertyType.IsEnum)
+                {
+                    var underlyingType = Enum.GetUnderlyingType(property.PropertyType);
+                    object rawValue = ReadPropertyValue(address, property, endianness, underlyingType);
+                    var enumValue = Enum.ToObject(property.PropertyType, rawValue);
+                    property.SetValue(result, enumValue);
                 }
                 else if (!IsBuiltInType(property.PropertyType))
                 {
@@ -351,9 +363,9 @@ namespace Archipelago.Core.Util
 
             return (T)result;
         }
-        private static object ReadPropertyValue(ulong address, PropertyInfo property, Endianness endianness)
+        private static object ReadPropertyValue(ulong address, PropertyInfo property, Endianness endianness, Type enumType = null)
         {
-            var propertyType = property.PropertyType;
+            var propertyType = enumType != null ? enumType : property.PropertyType;
             var attribute = property.GetCustomAttribute<MemoryOffsetAttribute>();
 
             if (propertyType == typeof(string))
