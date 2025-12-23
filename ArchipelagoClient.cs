@@ -234,14 +234,7 @@ namespace Archipelago.Core
             }
             _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot);
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
-            _gpsStateManager.Handler.MapChanged += (o,e) =>
-            {
 
-            };
-            _gpsStateManager.Handler.PositionChanged += (o, e) =>
-            {
-
-            };
             await LoadGameStateAsync(cancellationToken);
 
             itemsReceivedCurrentSession = 0;

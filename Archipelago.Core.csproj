@@ -5,7 +5,7 @@
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
     <Authors>ArsonAssassin</Authors>
     <Product>Archipelago.Core</Product>
     <PackageId>Archipelago.Core</PackageId>
@@ -18,22 +18,16 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
-    <None Remove="Libfiles\linux-x64\libglfw.so" />
-    <None Remove="Libfiles\osx-x64\libglfw.3.dylib" />
-    <None Remove="Libfiles\win-x64\glfw3.dll" />
-    <None Remove="Libfiles\win-x86\glfw3.dll" />
-  </ItemGroup>
-  <ItemGroup>
     <EmbeddedResource Include="Libfiles\linux-x64\libglfw.so" LogicalName="Archipelago.Core.Libfiles.linux-x64.libglfw.so">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </EmbeddedResource>
     <EmbeddedResource Include="Libfiles\osx-x64\libglfw.3.dylib" LogicalName="Archipelago.Core.Libfiles.osx-x64.libglfw.dylib">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </EmbeddedResource>
-    <EmbeddedResource Include="Libfiles\win-x64\glfw3.dll" LogicalName="Archipelago.Core.Libfiles.win-x64.glfw.dll">
+    <EmbeddedResource Include="Libfiles\win-x64\glfw3.dll" LogicalName="Archipelago.Core.Libfiles.win-x64.glfw3.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </EmbeddedResource>
-    <EmbeddedResource Include="Libfiles\win-x86\glfw3.dll" LogicalName="Archipelago.Core.Libfiles.win-x86.glfw.dll">
+    <EmbeddedResource Include="Libfiles\win-x86\glfw3.dll" LogicalName="Archipelago.Core.Libfiles.win-x86.glfw3.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </EmbeddedResource>
   </ItemGroup>

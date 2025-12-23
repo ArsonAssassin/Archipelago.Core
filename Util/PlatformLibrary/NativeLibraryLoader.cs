@@ -1,6 +1,7 @@
 ﻿using Archipelago.Core.Models;
 using System;
 using System.Collections.Generic;
+using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -13,13 +14,6 @@ namespace Archipelago.Core.Util.PlatformLibrary
     {
         private static readonly Dictionary<string, Libfile> _libFiles = new()
         {
-            ["glfw"] = new Libfile
-            {
-                linuxx64 = "libglfw.so",
-                osxx64 = "libglfw.3.dylib",
-                winx64 = "glfw3.dll",
-                winx86 = "glfw3.dll"
-            },
             ["glfw3"] = new Libfile
             {
                 linuxx64 = "libglfw.so",
@@ -31,10 +25,24 @@ namespace Archipelago.Core.Util.PlatformLibrary
         static NativeLibraryLoader()
         {
             NativeLibrary.SetDllImportResolver(Assembly.GetExecutingAssembly(), DllImportResolver);
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    NativeLibrary.SetDllImportResolver(assembly, DllImportResolver);
+                }
+                catch
+                {
+                    // Some assemblies might not allow this, ignore them
+                }
+            }
         }
         public static void Initialize()
         {
-
+            foreach (var lib in _libFiles.Values)
+            {
+                ExtractLibrary(lib, Assembly.GetExecutingAssembly());
+            }
         }
         private static IntPtr DllImportResolver(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
         {
@@ -44,6 +52,24 @@ namespace Archipelago.Core.Util.PlatformLibrary
             if (!_libFiles.TryGetValue(normalizedName, out var libFile))
                 return IntPtr.Zero;
 
+            return ExtractLibrary(libFile, assembly);
+        }
+
+        private static string NormalizeLibraryName(string libraryName)
+        {
+            // Remove common extensions and prefixes
+            var name = libraryName
+                .Replace(".dll", "")
+                .Replace(".so", "")
+                .Replace(".dylib", "");
+
+            if (name.StartsWith("lib"))
+                name = name.Substring(3);
+
+            return name;
+        }
+        private static IntPtr ExtractLibrary(Libfile libFile, Assembly assembly)
+        {
             var rid = GetRuntimeIdentifier();
             var platformLibName = GetPlatformLibraryName(libFile, rid);
 
@@ -70,21 +96,6 @@ namespace Archipelago.Core.Util.PlatformLibrary
 
             return NativeLibrary.Load(targetPath);
         }
-
-        private static string NormalizeLibraryName(string libraryName)
-        {
-            // Remove common extensions and prefixes
-            var name = libraryName
-                .Replace(".dll", "")
-                .Replace(".so", "")
-                .Replace(".dylib", "");
-
-            if (name.StartsWith("lib"))
-                name = name.Substring(3);
-
-            return name;
-        }
-
         private static string? GetPlatformLibraryName(Libfile libFile, string rid)
         {
             return rid switch
