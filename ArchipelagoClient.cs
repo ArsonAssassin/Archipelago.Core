@@ -4,6 +4,7 @@ using Archipelago.Core.Models;
 using Archipelago.Core.Util;
 using Archipelago.Core.Util.GPS;
 using Archipelago.Core.Util.Overlay;
+using Archipelago.Core.Util.PlatformLibrary;
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
 using Archipelago.MultiClient.Net.Enums;
@@ -17,6 +18,7 @@ using System.Drawing.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
+using System.Threading.Tasks;
 using Color = Archipelago.Core.Util.Overlay.Color;
 
 namespace Archipelago.Core
@@ -80,6 +82,7 @@ namespace Archipelago.Core
             AppDomain.CurrentDomain.ProcessExit += async (sender, e) => await SaveGameStateAsync();
             _gameClient = gameClient;
             _gameClientPollTimer = new Timer(PeriodicGameClientConnectionCheck, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+            NativeLibraryLoader.Initialize();
             this.isReadyToReceiveItems = false;
         }
         public async Task SaveGameStateAsync(CancellationToken cancellationToken = default)
@@ -231,6 +234,14 @@ namespace Archipelago.Core
             }
             _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot);
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
+            _gpsStateManager.Handler.MapChanged += (o,e) =>
+            {
+
+            };
+            _gpsStateManager.Handler.PositionChanged += (o, e) =>
+            {
+
+            };
             await LoadGameStateAsync(cancellationToken);
 
             itemsReceivedCurrentSession = 0;
@@ -645,6 +656,10 @@ namespace Archipelago.Core
             _gameStateManager.CurrentItemState.ReceivedItems = new ConcurrentQueue<Item>();
             _gameStateManager.CurrentItemState.LastCheckedIndex = 0;
             await _gameStateManager.ForceSaveItemsAsync(cancellationToken);
+        }
+        public async Task SendBounceMessage(BouncePacket bouncePacket)
+        {
+            await CurrentSession.Socket.SendPacketAsync(bouncePacket);
         }
         public DeathLinkService EnableDeathLink()
         {

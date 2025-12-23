@@ -3,7 +3,9 @@ using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Packets;
+using Newtonsoft.Json.Linq;
 using Serilog;
+using Silk.NET.Input;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -70,8 +72,11 @@ namespace Archipelago.Core.Helpers
             try
             {
                 Log.Debug("Saving GPS state");
-                var packet = CreateSetPacket("GPS", _gpsHandler.GetCurrentPosition());
+                var positionData = _gpsHandler.GetCurrentPosition();
+                var packet = CreateSetPacket("GPS", positionData);
                 await _session.Socket.SendPacketAsync(packet);
+                var bounce = CreateBouncePacket(positionData);
+                await _session.Socket.SendPacketAsync(bounce);
                 Log.Debug("GPS save completed");
             }
             catch (Exception ex)
@@ -97,7 +102,14 @@ namespace Archipelago.Core.Helpers
                 }
             };
         }
-
+        private BouncePacket CreateBouncePacket(PositionData positionData)
+        {
+            var packet = new BouncePacket()
+            {
+                Data = new Dictionary<string, Newtonsoft.Json.Linq.JToken> { { "GPS", Newtonsoft.Json.Linq.JToken.FromObject(positionData) } }                
+            };
+            return packet;
+        }
         public void Dispose()
         {
             if (_gpsHandler != null)
