@@ -61,6 +61,7 @@ namespace Archipelago.Core
 
         private string GameName { get; set; } = "";
         private string Seed { get; set; } = "";
+		private string _saveId { get; set; }
         private Dictionary<string, object> _options = [];
         public Dictionary<string, object> Options { get { return _options; } }
         public ItemState ItemState => _gameStateManager?.CurrentItemState;
@@ -135,7 +136,7 @@ namespace Archipelago.Core
             OverlayService.AttachToWindow(Memory.GetCurrentProcess().MainWindowHandle);
             isOverlayEnabled = true;
         }
-        public async Task Connect(string host, string gameName, CancellationToken cancellationToken = default)
+        public async Task Connect(string host, string gameName, string saveId, CancellationToken cancellationToken = default)
         {
             cancellationToken = CombineTokens(cancellationToken);
             Disconnect();
@@ -232,7 +233,7 @@ namespace Archipelago.Core
             {
                 Log.Warning("No options found.");
             }
-            _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot);
+            _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot, _saveId);
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
 
             await LoadGameStateAsync(cancellationToken);
