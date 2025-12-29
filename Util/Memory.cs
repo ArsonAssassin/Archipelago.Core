@@ -12,6 +12,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Archipelago.Core.Util.PlatformMemory;
 using static Archipelago.Core.Util.Enums;
 
 namespace Archipelago.Core.Util
@@ -26,9 +27,14 @@ namespace Archipelago.Core.Util
 
         static Memory()
         {
-            PlatformImpl = RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
-                ? new LinuxMemory()
-                : new WindowsMemory();
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                PlatformImpl = new LinuxMemory();
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                PlatformImpl = new MacOSMemory();
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                PlatformImpl = new WindowsMemory();
+            throw new PlatformNotSupportedException();
         }
         #endregion
 

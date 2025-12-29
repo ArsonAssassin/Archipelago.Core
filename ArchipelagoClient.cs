@@ -58,10 +58,10 @@ namespace Archipelago.Core
                 }
             }
         }
-
+        public GPSStateManager GpsStateManager { get { return _gpsStateManager; } }
         private string GameName { get; set; } = "";
         private string Seed { get; set; } = "";
-		private string _saveId { get; set; }
+        private string _saveId { get; set; }
         private Dictionary<string, object> _options = [];
         public Dictionary<string, object> Options { get { return _options; } }
         public ItemState ItemState => _gameStateManager?.CurrentItemState;
@@ -203,7 +203,7 @@ namespace Archipelago.Core
                 Log.Error("Must be connected to the server to log in.  Please ensure your host is correct.");
                 return;
             }
-            if(itemsHandlingFlags != null)
+            if (itemsHandlingFlags != null)
             {
                 itemsFlags = itemsHandlingFlags;
             }
@@ -299,7 +299,7 @@ namespace Archipelago.Core
             {
                 if (!isReadyToReceiveItems) /* in case it was set false while waiting */
                 {
-                    return; 
+                    return;
                 }
                 await _gameStateManager.LoadItemsAsync(cancellationToken);
 

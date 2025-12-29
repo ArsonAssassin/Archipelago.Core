@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using Serilog;
 using static Archipelago.Core.Util.Enums;
 
-namespace Archipelago.Core.Util
+namespace Archipelago.Core.Util.PlatformMemory
 {
     public class WindowsMemory : IMemory
     {
@@ -33,10 +33,10 @@ namespace Archipelago.Core.Util
         [StructLayout(LayoutKind.Sequential)]
         public struct MEMORY_BASIC_INFORMATION
         {
-            public IntPtr BaseAddress;
-            public IntPtr AllocationBase;
+            public nint BaseAddress;
+            public nint AllocationBase;
             public uint AllocationProtect;
-            public IntPtr RegionSize;
+            public nint RegionSize;
             public uint State;
             public uint Protect;
             public uint Type;
@@ -44,87 +44,87 @@ namespace Archipelago.Core.Util
 
         #region Native Methods
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "ReadProcessMemory")]
-        private static extern bool ReadProcessMemory_Win32(IntPtr processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
+        private static extern bool ReadProcessMemory_Win32(nint processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out nint lpNumberOfBytesRead);
 
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "WriteProcessMemory")]
-        private static extern bool WriteProcessMemory_Win32(IntPtr processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesWritten);
+        private static extern bool WriteProcessMemory_Win32(nint processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out nint lpNumberOfBytesWritten);
 
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "OpenProcess")]
-        private static extern IntPtr OpenProcess_Win32(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+        private static extern nint OpenProcess_Win32(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "VirtualProtectEx")]
-        private static extern bool VirtualProtectEx_Win32(IntPtr processH, IntPtr lpAddress, IntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+        private static extern bool VirtualProtectEx_Win32(nint processH, nint lpAddress, nint dwSize, uint flNewProtect, out uint lpflOldProtect);
 
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "VirtualAllocEx")]
-        private static extern IntPtr VirtualAllocEx_Win32(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint flAllocationType, uint flProtect);
+        private static extern nint VirtualAllocEx_Win32(nint hProcess, nint lpAddress, nint dwSize, uint flAllocationType, uint flProtect);
 
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "VirtualQueryEx")]
-        static extern IntPtr VirtualQueryEx_Win32(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
+        static extern nint VirtualQueryEx_Win32(nint hProcess, nint lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
 
         [DllImport("kernel32.dll", EntryPoint = "VirtualFreeEx")]
-        private static extern bool VirtualFreeEx_Win32(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint dwFreeType);
+        private static extern bool VirtualFreeEx_Win32(nint hProcess, nint lpAddress, nint dwSize, uint dwFreeType);
 
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "GetLastError")]
         private static extern uint GetLastError_Win32();
 
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "CloseHandle")]
-        private static extern bool CloseHandle_Win32(IntPtr handle);
+        private static extern bool CloseHandle_Win32(nint handle);
 
         [DllImport("kernel32.dll", EntryPoint = "CreateRemoteThread")]
-        private static extern IntPtr CreateRemoteThread_Win32(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+        private static extern nint CreateRemoteThread_Win32(nint hProcess, nint lpThreadAttributes, uint dwStackSize, nint lpStartAddress, nint lpParameter, uint dwCreationFlags, nint lpThreadId);
 
         [DllImport("kernel32.dll", EntryPoint = "WaitForSingleObject")]
-        private static extern uint WaitForSingleObject_Win32(IntPtr hHandle, uint dwMilliseconds);
+        private static extern uint WaitForSingleObject_Win32(nint hHandle, uint dwMilliseconds);
 
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "GetModuleHandle")]
-        private static extern IntPtr GetModuleHandle_Win32(string lpModuleName);
+        private static extern nint GetModuleHandle_Win32(string lpModuleName);
 
         [DllImport("psapi.dll", SetLastError = true, EntryPoint = "GetModuleInformation")]
-        private static extern bool GetModuleInformation_Win32(IntPtr hProcess, IntPtr hModule, out MODULEINFO lpmodinfo, uint cb);
+        private static extern bool GetModuleInformation_Win32(nint hProcess, nint hModule, out MODULEINFO lpmodinfo, uint cb);
 
         [DllImport("kernel32.dll", SetLastError = true)]
-        static extern int FormatMessage(uint dwFlags, IntPtr lpSource, uint dwMessageId, uint dwLanguageId, ref IntPtr lpBuffer, uint nSize, IntPtr Arguments);
+        static extern int FormatMessage(uint dwFlags, nint lpSource, uint dwMessageId, uint dwLanguageId, ref nint lpBuffer, uint nSize, nint Arguments);
 	[DllImport("user32.dll", SetLastError = true)]
-        private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processID);
+        private static extern int GetWindowThreadProcessId(nint hWnd, out int processID);
         #endregion
 
         #region Memory Operations
-        public bool ReadProcessMemory(IntPtr processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead)
+        public bool ReadProcessMemory(nint processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out nint lpNumberOfBytesRead)
         {
             return ReadProcessMemory_Win32(processH, lpBaseAddress, lpBuffer, dwSize, out lpNumberOfBytesRead);
         }
 
-        public bool WriteProcessMemory(IntPtr processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesWritten)
+        public bool WriteProcessMemory(nint processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out nint lpNumberOfBytesWritten)
         {
             return WriteProcessMemory_Win32(processH, lpBaseAddress, lpBuffer, dwSize, out lpNumberOfBytesWritten);
         }
 
-        public IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId)
+        public nint OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId)
         {
             return OpenProcess_Win32(dwDesiredAccess, bInheritHandle, dwProcessId);
         }
 
-        public bool VirtualProtectEx(IntPtr processH, IntPtr lpAddress, IntPtr dwSize, uint flNewProtect, out uint lpflOldProtect)
+        public bool VirtualProtectEx(nint processH, nint lpAddress, nint dwSize, uint flNewProtect, out uint lpflOldProtect)
         {
             return VirtualProtectEx_Win32(processH, lpAddress, dwSize, flNewProtect, out lpflOldProtect);
         }
 
-        public IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint flAllocationType, uint flProtect)
+        public nint VirtualAllocEx(nint hProcess, nint lpAddress, nint dwSize, uint flAllocationType, uint flProtect)
         {
             return VirtualAllocEx_Win32(hProcess, lpAddress, dwSize, flAllocationType, flProtect);
         }
 
-        public IntPtr VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength)
+        public nint VirtualQueryEx(nint hProcess, nint lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength)
         {
-            IntPtr ptr = VirtualQueryEx_Win32(hProcess, lpAddress, out MEMORY_BASIC_INFORMATION mbi, dwLength);
+            nint ptr = VirtualQueryEx_Win32(hProcess, lpAddress, out MEMORY_BASIC_INFORMATION mbi, dwLength);
             lpBuffer = mbi;
             return ptr;
         }
 
-        public IntPtr FindFreeRegionBelow4GB(IntPtr hProcess, uint size)
+        public nint FindFreeRegionBelow4GB(nint hProcess, uint size)
         {
             const ulong MAX_32BIT = 0x7FFE0000;
-            IntPtr lpAddress = (IntPtr)(MAX_32BIT - 0x1000);
+            nint lpAddress = (nint)(MAX_32BIT - 0x1000);
 
             while ((ulong)lpAddress >= 0)
             {
@@ -134,24 +134,24 @@ namespace Archipelago.Core.Util
                 {
                     Log.Logger.Warning("Could not find suitable Address");
                 }
-                if ((MemoryState)mbi.State == MemoryState.Free && (long)mbi.RegionSize >= size)
+                if ((MemoryState)mbi.State == MemoryState.Free && mbi.RegionSize >= size)
                 {
-                    return new IntPtr(mbi.BaseAddress);
+                    return new nint(mbi.BaseAddress);
                 }
 
                 // Move to next region
-                lpAddress = new IntPtr(mbi.BaseAddress.ToInt32() - 0x10000);
+                lpAddress = new nint(mbi.BaseAddress.ToInt32() - 0x10000);
             }
 
-            return IntPtr.Zero; // No suitable region found
+            return nint.Zero; // No suitable region found
         }
 
-        public bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint dwFreeType)
+        public bool VirtualFreeEx(nint hProcess, nint lpAddress, nint dwSize, uint dwFreeType)
         {
             return VirtualFreeEx_Win32(hProcess, lpAddress, dwSize, dwFreeType);
         }
 
-        public bool CloseHandle(IntPtr handle)
+        public bool CloseHandle(nint handle)
         {
             return CloseHandle_Win32(handle);
         }
@@ -160,7 +160,7 @@ namespace Archipelago.Core.Util
 	    Process[] Processes = Process.GetProcessesByName(procName);
             if (Processes.Any(x => x.MainWindowHandle > 0))
             {
-                IntPtr hWnd = Processes.First(x => x.MainWindowHandle > 0).MainWindowHandle;
+                nint hWnd = Processes.First(x => x.MainWindowHandle > 0).MainWindowHandle;
                 GetWindowThreadProcessId(hWnd, out int PID);
                 return PID;
             }
@@ -179,15 +179,15 @@ namespace Archipelago.Core.Util
         public string GetLastErrorMessage()
         {
             uint errorCode = GetLastError_Win32();
-            IntPtr lpMsgBuf = IntPtr.Zero;
+            nint lpMsgBuf = nint.Zero;
             FormatMessage(
                 FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                IntPtr.Zero,
+                nint.Zero,
                 errorCode,
                 0,
                 ref lpMsgBuf,
                 0,
-                IntPtr.Zero);
+                nint.Zero);
             string errorMessage = Marshal.PtrToStringAnsi(lpMsgBuf);
             Marshal.FreeHGlobal(lpMsgBuf);
             return $"Error {errorCode}: {errorMessage}";
@@ -199,24 +199,24 @@ namespace Archipelago.Core.Util
         #endregion
 
         #region Module Information
-        public MODULEINFO GetModuleInfo(IntPtr processHandle, string moduleName)
+        public MODULEINFO GetModuleInfo(nint processHandle, string moduleName)
         {
-            IntPtr moduleHandle = GetModuleHandle(moduleName);
+            nint moduleHandle = GetModuleHandle(moduleName);
             GetModuleInformation_Win32(processHandle, moduleHandle, out var moduleInfo, (uint)Marshal.SizeOf(typeof(MODULEINFO)));
             return moduleInfo;
         }
 
-        public IntPtr GetModuleHandle(string moduleName)
+        public nint GetModuleHandle(string moduleName)
         {
             return GetModuleHandle_Win32(moduleName);
         }
         #endregion
 
         #region Remote Execution
-        public uint Execute(IntPtr processHandle, IntPtr address, uint timeoutSeconds = 0xFFFFFFFF)
+        public uint Execute(nint processHandle, nint address, uint timeoutSeconds = 0xFFFFFFFF)
         {
-            IntPtr thread = CreateRemoteThread_Win32(processHandle, IntPtr.Zero, 0, address, IntPtr.Zero, 0, IntPtr.Zero);
-            if (thread == IntPtr.Zero)
+            nint thread = CreateRemoteThread_Win32(processHandle, nint.Zero, 0, address, nint.Zero, 0, nint.Zero);
+            if (thread == nint.Zero)
             {
                 Log.Logger.Error($"Failed to create remote thread: {GetLastErrorMessage()}");
                 return 0;
@@ -234,10 +234,10 @@ namespace Archipelago.Core.Util
             return result;
         }
 
-        public uint ExecuteCommand(IntPtr processHandle, byte[] bytes, uint timeoutSeconds = 0xFFFFFFFF)
+        public uint ExecuteCommand(nint processHandle, byte[] bytes, uint timeoutSeconds = 0xFFFFFFFF)
         {
-            IntPtr address = VirtualAllocEx(processHandle, IntPtr.Zero, (IntPtr)bytes.Length, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-            if (address == IntPtr.Zero)
+            nint address = VirtualAllocEx(processHandle, nint.Zero, bytes.Length, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+            if (address == nint.Zero)
             {
                 Log.Logger.Error($"Failed to allocate memory: {GetLastErrorMessage()}");
                 return 0;
@@ -248,7 +248,7 @@ namespace Archipelago.Core.Util
                 if (!WriteProcessMemory(processHandle, (ulong)address, bytes, bytes.Length, out nint bytesWritten))
                 {
                     Log.Logger.Error($"Failed to write bytes to memory: {GetLastErrorMessage()}");
-                    if (!VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE))
+                    if (!VirtualFreeEx(processHandle, address, nint.Zero, MEM_RELEASE))
                     {
                         Log.Logger.Warning($"Failed to free bytes in memory: 1_{GetLastErrorMessage()}");
                     }
@@ -256,7 +256,7 @@ namespace Archipelago.Core.Util
                 }
 
                 uint result = Execute(processHandle, address, timeoutSeconds);
-                if (!VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE))
+                if (!VirtualFreeEx(processHandle, address, nint.Zero, MEM_RELEASE))
                 {
                     Log.Logger.Warning($"Failed to free bytes in memory: 2_{GetLastErrorMessage()}");
                 }
@@ -265,7 +265,7 @@ namespace Archipelago.Core.Util
             catch (Exception ex)
             {
                 Log.Logger.Error($"Error executing command: {ex.Message}");
-                if (!VirtualFreeEx(processHandle, address, IntPtr.Zero, MEM_RELEASE))
+                if (!VirtualFreeEx(processHandle, address, nint.Zero, MEM_RELEASE))
                 {
                     Log.Logger.Warning($"Failed to free bytes in memory: 3_{GetLastErrorMessage()}");
                 }

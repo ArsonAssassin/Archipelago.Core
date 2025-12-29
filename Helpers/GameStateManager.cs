@@ -20,6 +20,7 @@ namespace Archipelago.Core.Helpers
         private readonly string _gameName;
         private readonly string _seed;
         private readonly int _slot;
+        private readonly string _saveId;
 
         private DateTime _lastItemSaveTime = DateTime.MinValue;
         private DateTime _lastLocationSaveTime = DateTime.MinValue;
