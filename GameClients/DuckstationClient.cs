@@ -14,16 +14,8 @@ namespace Archipelago.Core.GameClients
     {
         public DuckstationClient()
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                ProcessName = "duckstation";
-                ProcId = Memory.GetProcFromIdFromPartial(ProcessName);
-            }
-            else
-            {
-                ProcessName = "duckstation-qt-x64-ReleaseLTCG";
-                ProcId = Memory.GetProcIdFromExe(ProcessName);
-            }
+            ProcessName = "duckstation";
+            ProcId = Memory.GetProcessID(ProcessName);
         }
         public bool IsConnected { get; set; }
         public int ProcId { get; set; }

@@ -591,6 +591,45 @@ namespace Archipelago.Core.Util.PlatformMemory
 
             return nint.Zero;
         }
+        public nint GetModuleBaseAddress(int pid, string moduleName)
+        {
+            try
+            {
+                string mapsPath = $"/proc/{pid}/maps";
+                if (!File.Exists(mapsPath))
+                {
+                    Log.Logger.Warning($"Could not find memory maps for process {pid}");
+                    return nint.Zero;
+                }
+
+                var lines = File.ReadAllLines(mapsPath);
+                foreach (var line in lines)
+                {
+                    // Look for lines containing the module name
+                    if (line.Contains(moduleName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Parse the address range (format: "start-end perms offset dev:inode pathname")
+                        var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length < 1) continue;
+
+                        var addresses = parts[0].Split('-');
+                        if (addresses.Length != 2) continue;
+
+                        // Return the start address (base address)
+                        ulong baseAddress = Convert.ToUInt64(addresses[0], 16);
+                        return new nint((long)baseAddress);
+                    }
+                }
+
+                Log.Logger.Warning($"Module '{moduleName}' not found in process {pid}");
+                return nint.Zero;
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Error getting module base address on Linux: {ex.Message}");
+                return nint.Zero;
+            }
+        }
         #endregion
 
         #region Remote Execution
@@ -738,6 +777,167 @@ namespace Archipelago.Core.Util.PlatformMemory
                 dlclose(handle);
             }
         }
+
+        private string GetNullTerminatedString(byte[] buffer, int offset)
+        {
+            int length = 0;
+            while (offset + length < buffer.Length && buffer[offset + length] != 0)
+            {
+                length++;
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer, offset, length);
+        }
+        #endregion
+
+        #region export info
+        public nint GetExportAddress(int pid, nint moduleBase, string exportName)
+        {
+            // Linux implementation requires parsing ELF headers
+            // This is a complex operation that would need full ELF parsing
+
+            nint processHandle = OpenProcess(0x0010 | 0x0008, false, pid); // VM_READ | VM_OPERATION
+            if (processHandle == nint.Zero)
+            {
+                Log.Logger.Error($"Failed to open process {pid}");
+                return nint.Zero;
+            }
+
+            try
+            {
+                return FindELFExport(processHandle, moduleBase, exportName);
+            }
+            finally
+            {
+                CloseHandle(processHandle);
+            }
+        }
+
+        private nint FindELFExport(nint processHandle, nint moduleBase, string exportName)
+        {
+            try
+            {
+                // Read ELF header
+                byte[] elfHeader = new byte[64]; // ELF64 header size
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase, elfHeader, elfHeader.Length, out nint bytesRead))
+                {
+                    Log.Logger.Warning("Failed to read ELF header");
+                    return nint.Zero;
+                }
+
+                // Check ELF magic number
+                if (elfHeader[0] != 0x7F || elfHeader[1] != 'E' || elfHeader[2] != 'L' || elfHeader[3] != 'F')
+                {
+                    Log.Logger.Warning("Invalid ELF magic number");
+                    return nint.Zero;
+                }
+
+                // Determine if 32-bit or 64-bit
+                bool is64Bit = elfHeader[4] == 2;
+                if (!is64Bit)
+                {
+                    Log.Logger.Warning("32-bit ELF not fully supported");
+                    return nint.Zero;
+                }
+
+                // Read section header offset and count
+                ulong shoff = BitConverter.ToUInt64(elfHeader, 40);    // e_shoff (section header table offset)
+                ushort shentsize = BitConverter.ToUInt16(elfHeader, 58); // e_shentsize (section header entry size)
+                ushort shnum = BitConverter.ToUInt16(elfHeader, 60);   // e_shnum (number of section headers)
+                ushort shstrndx = BitConverter.ToUInt16(elfHeader, 62); // e_shstrndx (section name string table index)
+
+                // Read section headers
+                byte[] sectionHeaders = new byte[shentsize * shnum];
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase + shoff, sectionHeaders, sectionHeaders.Length, out bytesRead))
+                {
+                    Log.Logger.Warning("Failed to read section headers");
+                    return nint.Zero;
+                }
+
+                // Find .dynsym and .dynstr sections
+                ulong dynsymOffset = 0;
+                ulong dynsymSize = 0;
+                ulong dynstrOffset = 0;
+                ulong dynstrSize = 0;
+
+                for (int i = 0; i < shnum; i++)
+                {
+                    int offset = i * shentsize;
+
+                    uint sh_name = BitConverter.ToUInt32(sectionHeaders, offset);      // Section name (string table index)
+                    uint sh_type = BitConverter.ToUInt32(sectionHeaders, offset + 4);   // Section type
+                    ulong sh_offset = BitConverter.ToUInt64(sectionHeaders, offset + 24); // Section file offset
+                    ulong sh_size = BitConverter.ToUInt64(sectionHeaders, offset + 32);   // Section size
+
+                    // SHT_DYNSYM = 11, SHT_STRTAB = 3
+                    if (sh_type == 11) // .dynsym
+                    {
+                        dynsymOffset = sh_offset;
+                        dynsymSize = sh_size;
+                    }
+                    else if (sh_type == 3 && i != shstrndx) // .dynstr (but not .shstrtab)
+                    {
+                        // We need to verify this is actually .dynstr, not .strtab
+                        // For simplicity, assume the first non-shstrtab string table is .dynstr
+                        if (dynstrOffset == 0)
+                        {
+                            dynstrOffset = sh_offset;
+                            dynstrSize = sh_size;
+                        }
+                    }
+                }
+
+                if (dynsymOffset == 0 || dynstrOffset == 0)
+                {
+                    Log.Logger.Warning("Could not find .dynsym or .dynstr sections");
+                    return nint.Zero;
+                }
+
+                // Read .dynstr (string table)
+                byte[] dynstr = new byte[dynstrSize];
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase + dynstrOffset, dynstr, (int)dynstrSize, out bytesRead))
+                {
+                    Log.Logger.Warning("Failed to read .dynstr");
+                    return nint.Zero;
+                }
+
+                // Read and search .dynsym (symbol table)
+                const int SYM_ENTRY_SIZE = 24; // sizeof(Elf64_Sym)
+                int numSymbols = (int)(dynsymSize / SYM_ENTRY_SIZE);
+
+                for (int i = 0; i < numSymbols; i++)
+                {
+                    byte[] symEntry = new byte[SYM_ENTRY_SIZE];
+                    if (!ReadProcessMemory(processHandle, (ulong)moduleBase + dynsymOffset + (ulong)(i * SYM_ENTRY_SIZE),
+                        symEntry, SYM_ENTRY_SIZE, out bytesRead))
+                    {
+                        continue;
+                    }
+
+                    uint st_name = BitConverter.ToUInt32(symEntry, 0);      // Symbol name (string table index)
+                    ulong st_value = BitConverter.ToUInt64(symEntry, 8);    // Symbol value/address
+
+                    // Get symbol name from string table
+                    if (st_name >= dynstrSize) continue;
+
+                    string symbolName = GetNullTerminatedString(dynstr, (int)st_name);
+
+                    if (symbolName == exportName)
+                    {
+                        // Found the symbol
+                        return (nint)((ulong)moduleBase + st_value);
+                    }
+                }
+
+                Log.Logger.Warning($"Export '{exportName}' not found in ELF symbol table");
+                return nint.Zero;
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Error parsing ELF: {ex.Message}");
+                return nint.Zero;
+            }
+        }
+
         #endregion
     }
 }

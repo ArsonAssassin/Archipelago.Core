@@ -755,6 +755,14 @@ namespace Archipelago.Core.Util
             if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
             return PlatformImpl.GetModuleInfo(CurrentHandle(), moduleName);
         }
+        public static IntPtr GetModuleBaseAddress(int pid, string moduleName)
+        {
+            return PlatformImpl.GetModuleBaseAddress(pid, moduleName);
+        }
+        public static IntPtr GetExportAddress(int pid, IntPtr moduleBase, string exportName)
+        {
+            return PlatformImpl.GetExportAddress(pid, moduleBase, exportName);
+        }
         #endregion
 
         #region Common Process IDs

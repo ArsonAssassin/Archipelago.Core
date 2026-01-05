@@ -41,7 +41,22 @@ namespace Archipelago.Core.Util.PlatformMemory
             public uint Protect;
             public uint Type;
         }
-
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MODULEENTRY32
+        {
+            public uint dwSize;
+            public uint th32ModuleID;
+            public uint th32ProcessID;
+            public uint GlblcntUsage;
+            public uint ProccntUsage;
+            public nint modBaseAddr;
+            public uint modBaseSize;
+            public nint hModule;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szModule;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExePath;
+        }
         #region Native Methods
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "ReadProcessMemory")]
         private static extern bool ReadProcessMemory_Win32(nint processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out nint lpNumberOfBytesRead);
@@ -86,6 +101,15 @@ namespace Archipelago.Core.Util.PlatformMemory
         static extern int FormatMessage(uint dwFlags, nint lpSource, uint dwMessageId, uint dwLanguageId, ref nint lpBuffer, uint nSize, nint Arguments);
 	[DllImport("user32.dll", SetLastError = true)]
         private static extern int GetWindowThreadProcessId(nint hWnd, out int processID);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern nint CreateToolhelp32Snapshot(uint dwFlags, int th32ProcessID);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool Module32First(nint hSnapshot, ref MODULEENTRY32 lpme);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool Module32Next(nint hSnapshot, ref MODULEENTRY32 lpme);
         #endregion
 
         #region Memory Operations
@@ -210,8 +234,214 @@ namespace Archipelago.Core.Util.PlatformMemory
         {
             return GetModuleHandle_Win32(moduleName);
         }
-        #endregion
 
+        public nint GetModuleBaseAddress(int pid, string moduleName)
+        {
+            const uint TH32CS_SNAPMODULE = 0x00000008;
+
+            nint snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
+            if (snapshot == nint.Zero)
+            {
+                Log.Logger.Warning($"Failed to create module snapshot for PID {pid}");
+                return nint.Zero;
+            }
+
+            try
+            {
+                MODULEENTRY32 moduleEntry = new MODULEENTRY32();
+                moduleEntry.dwSize = (uint)Marshal.SizeOf(typeof(MODULEENTRY32));
+
+                if (Module32First(snapshot, ref moduleEntry))
+                {
+                    do
+                    {
+                        if (moduleEntry.szModule.Contains(moduleName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return moduleEntry.modBaseAddr;
+                        }
+                    } while (Module32Next(snapshot, ref moduleEntry));
+                }
+
+                Log.Logger.Warning($"Module '{moduleName}' not found in process {pid}");
+                return nint.Zero;
+            }
+            finally
+            {
+                CloseHandle(snapshot);
+            }
+        }
+
+        #endregion
+        #region export info
+        public nint GetExportAddress(int pid, nint moduleBase, string exportName)
+        {
+            nint processHandle = OpenProcess(0x0010 | 0x0020 | 0x0008, false, pid); // VM_READ | VM_WRITE | VM_OPERATION
+            if (processHandle == nint.Zero)
+            {
+                Log.Logger.Error($"Failed to open process {pid}");
+                return nint.Zero;
+            }
+
+            try
+            {
+                // Find export table in PE header
+                nint exportTableAddress = FindExportTable(processHandle, moduleBase);
+                if (exportTableAddress == nint.Zero)
+                {
+                    return nint.Zero;
+                }
+
+                // Find the specific export by name
+                return FindExportByName(processHandle, moduleBase, exportTableAddress, exportName);
+            }
+            finally
+            {
+                CloseHandle(processHandle);
+            }
+        }
+
+        private nint FindExportTable(nint processHandle, nint moduleBaseAddress)
+        {
+            // Read the DOS header
+            byte[] dosHeaderBuffer = new byte[64];
+            if (!ReadProcessMemory(processHandle, (ulong)moduleBaseAddress, dosHeaderBuffer, dosHeaderBuffer.Length, out nint bytesRead))
+            {
+                Log.Logger.Warning("Failed to read DOS header");
+                return nint.Zero;
+            }
+
+            // Check for MZ signature
+            if (dosHeaderBuffer[0] != 'M' || dosHeaderBuffer[1] != 'Z')
+            {
+                Log.Logger.Warning("Invalid DOS header signature");
+                return nint.Zero;
+            }
+
+            // Get e_lfanew field to find the PE header
+            int e_lfanew = BitConverter.ToInt32(dosHeaderBuffer, 0x3C);
+
+            // Read the NT header signature
+            byte[] ntSignatureBuffer = new byte[4];
+            if (!ReadProcessMemory(processHandle, (ulong)moduleBaseAddress + (ulong)e_lfanew, ntSignatureBuffer, ntSignatureBuffer.Length, out bytesRead))
+            {
+                Log.Logger.Warning("Failed to read NT signature");
+                return nint.Zero;
+            }
+
+            // Check for PE signature
+            if (ntSignatureBuffer[0] != 'P' || ntSignatureBuffer[1] != 'E' || ntSignatureBuffer[2] != 0 || ntSignatureBuffer[3] != 0)
+            {
+                Log.Logger.Warning("Invalid PE signature");
+                return nint.Zero;
+            }
+
+            // Read the File Header to determine architecture
+            byte[] machineBuffer = new byte[2];
+            if (!ReadProcessMemory(processHandle, (ulong)moduleBaseAddress + (ulong)e_lfanew + 4, machineBuffer, machineBuffer.Length, out bytesRead))
+            {
+                Log.Logger.Warning("Failed to read machine type");
+                return nint.Zero;
+            }
+
+            bool is32Bit = (BitConverter.ToUInt16(machineBuffer, 0) & 0x0100) != 0;
+            int optionalHeaderOffset = e_lfanew + 4 + 20; // 4 for PE signature, 20 for File Header
+            int dataDirectoryOffset = is32Bit ? optionalHeaderOffset + 96 : optionalHeaderOffset + 112;
+
+            // Read the Export Directory RVA
+            byte[] exportDirectoryBuffer = new byte[8];
+            if (!ReadProcessMemory(processHandle, (ulong)moduleBaseAddress + (ulong)dataDirectoryOffset, exportDirectoryBuffer, exportDirectoryBuffer.Length, out bytesRead))
+            {
+                Log.Logger.Warning("Failed to read export directory");
+                return nint.Zero;
+            }
+
+            uint exportDirectoryRVA = BitConverter.ToUInt32(exportDirectoryBuffer, 0);
+            if (exportDirectoryRVA == 0)
+            {
+                Log.Logger.Warning("Module has no export directory");
+                return nint.Zero;
+            }
+
+            return (nint)((ulong)moduleBaseAddress + exportDirectoryRVA);
+        }
+
+        private nint FindExportByName(nint processHandle, nint moduleBaseAddress, nint exportTableAddress, string exportName)
+        {
+            // Read the export directory structure
+            byte[] exportDirectoryBuffer = new byte[40]; // Size of IMAGE_EXPORT_DIRECTORY
+            if (!ReadProcessMemory(processHandle, (ulong)exportTableAddress, exportDirectoryBuffer, exportDirectoryBuffer.Length, out nint bytesRead))
+            {
+                Log.Logger.Warning("Failed to read export directory");
+                return nint.Zero;
+            }
+
+            // Extract fields from IMAGE_EXPORT_DIRECTORY
+            uint numberOfNames = BitConverter.ToUInt32(exportDirectoryBuffer, 24);
+            uint addressOfFunctions = BitConverter.ToUInt32(exportDirectoryBuffer, 28);
+            uint addressOfNames = BitConverter.ToUInt32(exportDirectoryBuffer, 32);
+            uint addressOfNameOrdinals = BitConverter.ToUInt32(exportDirectoryBuffer, 36);
+
+            // Read the names RVA array
+            byte[] namesBuffer = new byte[numberOfNames * 4];
+            if (!ReadProcessMemory(processHandle, (ulong)moduleBaseAddress + addressOfNames, namesBuffer, namesBuffer.Length, out bytesRead))
+            {
+                Log.Logger.Warning("Failed to read export names");
+                return nint.Zero;
+            }
+
+            // Read the ordinals array
+            byte[] ordinalsBuffer = new byte[numberOfNames * 2];
+            if (!ReadProcessMemory(processHandle, (ulong)moduleBaseAddress + addressOfNameOrdinals, ordinalsBuffer, ordinalsBuffer.Length, out bytesRead))
+            {
+                Log.Logger.Warning("Failed to read export ordinals");
+                return nint.Zero;
+            }
+
+            // Read the functions RVA array
+            byte[] functionsBuffer = new byte[numberOfNames * 4];
+            if (!ReadProcessMemory(processHandle, (ulong)moduleBaseAddress + addressOfFunctions, functionsBuffer, functionsBuffer.Length, out bytesRead))
+            {
+                Log.Logger.Warning("Failed to read export functions");
+                return nint.Zero;
+            }
+
+            // Search for the export by name
+            for (uint i = 0; i < numberOfNames; i++)
+            {
+                uint nameRVA = BitConverter.ToUInt32(namesBuffer, (int)(i * 4));
+
+                // Read the export name string
+                byte[] nameBuffer = new byte[256];
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBaseAddress + nameRVA, nameBuffer, nameBuffer.Length, out bytesRead))
+                {
+                    continue;
+                }
+
+                // Convert to null-terminated string
+                string currentExportName = System.Text.Encoding.ASCII.GetString(nameBuffer);
+                int nullTerminator = currentExportName.IndexOf('\0');
+                if (nullTerminator != -1)
+                {
+                    currentExportName = currentExportName.Substring(0, nullTerminator);
+                }
+
+                if (currentExportName == exportName)
+                {
+                    // Get the ordinal for this name
+                    ushort ordinal = BitConverter.ToUInt16(ordinalsBuffer, (int)(i * 2));
+
+                    // Get the function RVA for this ordinal
+                    uint functionRVA = BitConverter.ToUInt32(functionsBuffer, ordinal * 4);
+
+                    // Return the actual address
+                    return (nint)((ulong)moduleBaseAddress + functionRVA);
+                }
+            }
+
+            Log.Logger.Warning($"Export '{exportName}' not found");
+            return nint.Zero;
+        }
+        #endregion
         #region Remote Execution
         public uint Execute(nint processHandle, nint address, uint timeoutSeconds = 0xFFFFFFFF)
         {
