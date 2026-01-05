@@ -88,8 +88,7 @@ namespace Archipelago.Core.Util
             }
             else
             {
-                PlatformImpl.CloseHandle(CurrentHandle());
-                return 0;
+                return GetProcFromIdFromPartial(procName);
             }
         }
         public static int GetProcFromIdFromPartial(string procPartialName)
