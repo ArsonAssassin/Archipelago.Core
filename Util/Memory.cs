@@ -34,7 +34,8 @@ namespace Archipelago.Core.Util
                 PlatformImpl = new MacOSMemory();
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 PlatformImpl = new WindowsMemory();
-            throw new PlatformNotSupportedException();
+            else 
+                throw new PlatformNotSupportedException();
         }
         #endregion
 
