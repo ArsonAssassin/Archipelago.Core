@@ -81,16 +81,36 @@ namespace Archipelago.Core.Util
 
         public static int GetProcessID(string procName)
         {
-	    int procPID = PlatformImpl.GetPID(procName);
-	    if (procPID > 0)
-	    {
-		return procPID;
-	    }
-	    else
-	    {
-		PlatformImpl.CloseHandle(CurrentHandle());
-		return 0;
-	    }
+            int procPID = PlatformImpl.GetPID(procName);
+            if (procPID > 0)
+            {
+                return procPID;
+            }
+            else
+            {
+                PlatformImpl.CloseHandle(CurrentHandle());
+                return 0;
+            }
+        }
+        public static int GetProcFromIdFromPartial(string procPartialName)
+        {
+            Console.WriteLine($"Find Process ID {procPartialName}");
+            Process[] allProcesses = Process.GetProcesses();
+
+            List<Process> foundProcesses = allProcesses
+                .Where(p => p.ProcessName.Contains(procPartialName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (foundProcesses.Count >= 1)
+            {
+                return foundProcesses[0].Id;
+            }
+            else
+            {
+                PlatformImpl.CloseHandle(CurrentHandle());
+                return 0;
+            }
+
         }
         public static ulong GetPCSX2Offset()
         {
