@@ -4,6 +4,7 @@ using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -13,8 +14,8 @@ namespace Archipelago.Core.GameClients
     {
         public DuckstationClient()
         {
-            ProcessName = "duckstation-qt-x64-ReleaseLTCG";
-            ProcId = Memory.GetProcIdFromExe(ProcessName);
+            ProcessName = "duckstation";
+            ProcId = Memory.GetProcessID(ProcessName);
         }
         public bool IsConnected { get; set; }
         public int ProcId { get; set; }

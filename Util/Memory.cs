@@ -34,7 +34,8 @@ namespace Archipelago.Core.Util
                 PlatformImpl = new MacOSMemory();
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 PlatformImpl = new WindowsMemory();
-            throw new PlatformNotSupportedException();
+            else 
+                throw new PlatformNotSupportedException();
         }
         #endregion
 
@@ -81,16 +82,35 @@ namespace Archipelago.Core.Util
 
         public static int GetProcessID(string procName)
         {
-	    int procPID = PlatformImpl.GetPID(procName);
-	    if (procPID > 0)
-	    {
-		return procPID;
-	    }
-	    else
-	    {
-		PlatformImpl.CloseHandle(CurrentHandle());
-		return 0;
-	    }
+            int procPID = PlatformImpl.GetPID(procName);
+            if (procPID > 0)
+            {
+                return procPID;
+            }
+            else
+            {
+                return GetProcFromIdFromPartial(procName);
+            }
+        }
+        public static int GetProcFromIdFromPartial(string procPartialName)
+        {
+            Console.WriteLine($"Find Process ID {procPartialName}");
+            Process[] allProcesses = Process.GetProcesses();
+
+            List<Process> foundProcesses = allProcesses
+                .Where(p => p.ProcessName.Contains(procPartialName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (foundProcesses.Count >= 1)
+            {
+                return foundProcesses[0].Id;
+            }
+            else
+            {
+                PlatformImpl.CloseHandle(CurrentHandle());
+                return 0;
+            }
+
         }
         public static ulong GetPCSX2Offset()
         {
@@ -734,6 +754,14 @@ namespace Archipelago.Core.Util
         {
             if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
             return PlatformImpl.GetModuleInfo(CurrentHandle(), moduleName);
+        }
+        public static IntPtr GetModuleBaseAddress(int pid, string moduleName)
+        {
+            return PlatformImpl.GetModuleBaseAddress(pid, moduleName);
+        }
+        public static IntPtr GetExportAddress(int pid, IntPtr moduleBase, string exportName)
+        {
+            return PlatformImpl.GetExportAddress(pid, moduleBase, exportName);
         }
         #endregion
 

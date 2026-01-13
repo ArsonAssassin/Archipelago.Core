@@ -684,6 +684,75 @@ namespace Archipelago.Core.Util.PlatformMemory
                 return IntPtr.Zero;
             }
         }
+
+        public nint GetModuleBaseAddress(int pid, string moduleName)
+        {
+            // On macOS, we need to use task_for_pid and iterate through loaded images
+            // For now, provide a basic implementation that searches memory maps
+
+            int task = GetTaskForPid(pid);
+            if (task == MACH_PORT_NULL)
+            {
+                Log.Logger.Error($"Failed to get task for PID {pid}");
+                return nint.Zero;
+            }
+
+            try
+            {
+                // Iterate through memory regions to find the module
+                ulong address = 0;
+
+                while (address < 0x7FFFFFFFFFFF)
+                {
+                    ulong regionSize = 0;
+                    vm_region_basic_info_64 info = new vm_region_basic_info_64();
+                    uint infoCnt = (uint)(Marshal.SizeOf(typeof(vm_region_basic_info_64)) / sizeof(int));
+                    int objectName = 0;
+
+                    int result = mach_vm_region(task, ref address, ref regionSize, 1, ref info, ref infoCnt, ref objectName);
+
+                    if (result != KERN_SUCCESS)
+                        break;
+
+                    // Check if this region has execute permissions (likely code)
+                    if ((info.protection & VM_PROT_EXECUTE) != 0)
+                    {
+                        // This is a code region - could be our module
+                        // We'd need to read the Mach-O header to verify
+                        // For now, return the first executable region (simplified)
+                        // In a real implementation, we'd parse headers to match module name
+
+                        Log.Logger.Debug($"Found executable region at 0x{address:X} (size: 0x{regionSize:X})");
+
+                        // Try to verify it's a Mach-O file
+                        byte[] header = new byte[4];
+                        nint processHandle = new nint(pid);
+                        if (ReadProcessMemory(processHandle, address, header, 4, out nint bytesRead))
+                        {
+                            uint magic = BitConverter.ToUInt32(header, 0);
+                            // MH_MAGIC_64 = 0xFEEDFACF, MH_CIGAM_64 = 0xCFFAEDFE
+                            if (magic == 0xFEEDFACF || magic == 0xCFFAEDFE)
+                            {
+                                // This is a Mach-O file, likely the main executable or a library
+                                // In a full implementation, we'd read the load commands to find LC_ID_DYLIB
+                                // and match against moduleName
+                                return new nint((long)address);
+                            }
+                        }
+                    }
+
+                    address += regionSize;
+                }
+
+                Log.Logger.Warning($"Module '{moduleName}' not found in process {pid}");
+                return nint.Zero;
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Error getting module base address on macOS: {ex.Message}");
+                return nint.Zero;
+            }
+        }
         #endregion
 
         #region Remote Execution
@@ -849,6 +918,198 @@ namespace Archipelago.Core.Util.PlatformMemory
         private bool IsAppleSilicon()
         {
             return RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
+        }
+        private string GetNullTerminatedString(byte[] buffer, int offset)
+        {
+            int length = 0;
+            while (offset + length < buffer.Length && buffer[offset + length] != 0)
+            {
+                length++;
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer, offset, length);
+        }
+
+        private uint SwapUInt32(uint value)
+        {
+            return ((value & 0x000000FF) << 24) |
+                   ((value & 0x0000FF00) << 8) |
+                   ((value & 0x00FF0000) >> 8) |
+                   ((value & 0xFF000000) >> 24);
+        }
+
+        private ulong SwapUInt64(ulong value)
+        {
+            return ((value & 0x00000000000000FF) << 56) |
+                   ((value & 0x000000000000FF00) << 40) |
+                   ((value & 0x0000000000FF0000) << 24) |
+                   ((value & 0x00000000FF000000) << 8) |
+                   ((value & 0x000000FF00000000) >> 8) |
+                   ((value & 0x0000FF0000000000) >> 24) |
+                   ((value & 0x00FF000000000000) >> 40) |
+                   ((value & 0xFF00000000000000) >> 56);
+        }
+        #endregion
+
+        #region export info
+        public nint GetExportAddress(int pid, nint moduleBase, string exportName)
+        {
+            // macOS implementation requires parsing Mach-O headers
+
+            nint processHandle = OpenProcess(0x0010 | 0x0008, false, pid); // Equivalent access
+            if (processHandle == nint.Zero)
+            {
+                Log.Logger.Error($"Failed to open process {pid}");
+                return nint.Zero;
+            }
+
+            try
+            {
+                return FindMachOExport(processHandle, moduleBase, exportName);
+            }
+            finally
+            {
+                CloseHandle(processHandle);
+            }
+        }
+
+        private nint FindMachOExport(nint processHandle, nint moduleBase, string exportName)
+        {
+            try
+            {
+                // Read Mach-O header
+                byte[] header = new byte[32]; // mach_header_64 size
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase, header, header.Length, out nint bytesRead))
+                {
+                    Log.Logger.Warning("Failed to read Mach-O header");
+                    return nint.Zero;
+                }
+
+                uint magic = BitConverter.ToUInt32(header, 0);
+
+                // Check for 64-bit Mach-O magic numbers
+                if (magic != 0xFEEDFACF && magic != 0xCFFAEDFE) // MH_MAGIC_64 or MH_CIGAM_64 (byte-swapped)
+                {
+                    Log.Logger.Warning("Invalid Mach-O magic number");
+                    return nint.Zero;
+                }
+
+                bool needsSwap = (magic == 0xCFFAEDFE);
+
+                uint ncmds = BitConverter.ToUInt32(header, 16);
+                uint sizeofcmds = BitConverter.ToUInt32(header, 20);
+
+                if (needsSwap)
+                {
+                    ncmds = SwapUInt32(ncmds);
+                    sizeofcmds = SwapUInt32(sizeofcmds);
+                }
+
+                // Read load commands
+                byte[] loadCommands = new byte[sizeofcmds];
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase + 32, loadCommands, (int)sizeofcmds, out bytesRead))
+                {
+                    Log.Logger.Warning("Failed to read load commands");
+                    return nint.Zero;
+                }
+
+                // Search for LC_SYMTAB (0x2)
+                uint offset = 0;
+                uint symoff = 0;
+                uint nsyms = 0;
+                uint stroff = 0;
+                uint strsize = 0;
+
+                for (uint i = 0; i < ncmds; i++)
+                {
+                    uint cmd = BitConverter.ToUInt32(loadCommands, (int)offset);
+                    uint cmdsize = BitConverter.ToUInt32(loadCommands, (int)offset + 4);
+
+                    if (needsSwap)
+                    {
+                        cmd = SwapUInt32(cmd);
+                        cmdsize = SwapUInt32(cmdsize);
+                    }
+
+                    if (cmd == 0x2) // LC_SYMTAB
+                    {
+                        symoff = BitConverter.ToUInt32(loadCommands, (int)offset + 8);
+                        nsyms = BitConverter.ToUInt32(loadCommands, (int)offset + 12);
+                        stroff = BitConverter.ToUInt32(loadCommands, (int)offset + 16);
+                        strsize = BitConverter.ToUInt32(loadCommands, (int)offset + 20);
+
+                        if (needsSwap)
+                        {
+                            symoff = SwapUInt32(symoff);
+                            nsyms = SwapUInt32(nsyms);
+                            stroff = SwapUInt32(stroff);
+                            strsize = SwapUInt32(strsize);
+                        }
+                        break;
+                    }
+
+                    offset += cmdsize;
+                }
+
+                if (symoff == 0 || stroff == 0)
+                {
+                    Log.Logger.Warning("Could not find symbol table in Mach-O");
+                    return nint.Zero;
+                }
+
+                // Read string table
+                byte[] stringTable = new byte[strsize];
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase + stroff, stringTable, (int)strsize, out bytesRead))
+                {
+                    Log.Logger.Warning("Failed to read string table");
+                    return nint.Zero;
+                }
+
+                // Read and search symbol table
+                const int NLIST_64_SIZE = 16; // sizeof(nlist_64)
+
+                for (uint i = 0; i < nsyms; i++)
+                {
+                    byte[] nlist = new byte[NLIST_64_SIZE];
+                    if (!ReadProcessMemory(processHandle, (ulong)moduleBase + symoff + (i * NLIST_64_SIZE),
+                        nlist, NLIST_64_SIZE, out bytesRead))
+                    {
+                        continue;
+                    }
+
+                    uint n_strx = BitConverter.ToUInt32(nlist, 0);
+                    byte n_type = nlist[4];
+                    ulong n_value = BitConverter.ToUInt64(nlist, 8);
+
+                    if (needsSwap)
+                    {
+                        n_strx = SwapUInt32(n_strx);
+                        n_value = SwapUInt64(n_value);
+                    }
+
+                    // Check if this is an external symbol (N_EXT = 0x01, in n_type)
+                    if ((n_type & 0x01) == 0)
+                        continue;
+
+                    // Get symbol name
+                    if (n_strx >= strsize) continue;
+
+                    string symbolName = GetNullTerminatedString(stringTable, (int)n_strx);
+
+                    // Mach-O symbols usually have an underscore prefix
+                    if (symbolName == $"_{exportName}" || symbolName == exportName)
+                    {
+                        return (nint)((ulong)moduleBase + n_value);
+                    }
+                }
+
+                Log.Logger.Warning($"Export '{exportName}' not found in Mach-O symbol table");
+                return nint.Zero;
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Error parsing Mach-O: {ex.Message}");
+                return nint.Zero;
+            }
         }
         #endregion
     }
