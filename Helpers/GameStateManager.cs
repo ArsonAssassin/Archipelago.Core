@@ -32,14 +32,13 @@ namespace Archipelago.Core.Helpers
         public LocationState CurrentLocationState { get; private set; }
         public Dictionary<string, object> CustomValues { get; private set; }
 
-        public GameStateManager(ArchipelagoSession session, string gameName, string seed, int slot, string saveId)
+        public GameStateManager(ArchipelagoSession session, string gameName, string seed, int slot)
         {
             _session = session ?? throw new ArgumentNullException(nameof(session));
             _gameName = gameName ?? throw new ArgumentNullException(nameof(gameName));
             _seed = seed ?? throw new ArgumentNullException(nameof(seed));
             _slot = slot;
-			_saveId = saveId;
-			
+
             CustomValues = new Dictionary<string, object>();
         }
 
@@ -335,7 +334,7 @@ namespace Archipelago.Core.Helpers
 
         private string BuildStorageKey(string key)
         {
-            return $"{_gameName}_{_slot}_{_seed}_{key}_{_saveId}";
+            return $"{_gameName}_{_slot}_{_seed}_{key}";
         }
     }
 }
