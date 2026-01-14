@@ -15,6 +15,5 @@ namespace Archipelago.Core.Models
         }
         public ConcurrentQueue<Item> ReceivedItems { get; set; }
         public int LastCheckedIndex { get; set; }
-		public string SaveId { get; set; }
     }
 }
