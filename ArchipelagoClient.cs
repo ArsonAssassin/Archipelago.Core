@@ -63,7 +63,7 @@ namespace Archipelago.Core
         private string Seed { get; set; } = "";
         private Dictionary<string, object> _options = [];
         public Dictionary<string, object> Options { get { return _options; } }
-        public Dictionary<string, object> CustomValues => _gameStateManager?.CustomValues ?? new Dictionary<string, object>();
+        public Dictionary<string, string> CustomValues => _gameStateManager?.CustomValues ?? new Dictionary<string, string>();
 
         private IOverlayService? OverlayService { get; set; }
 
@@ -94,6 +94,10 @@ namespace Archipelago.Core
             }
 
             await _gameStateManager.SaveItemIndexAsync(cancellationToken);
+            if (CustomValues.Count > 0)
+            {
+                await _gameStateManager.SaveCustomValuesAsync(cancellationToken);
+            }
         }
         public async Task LoadGameStateAsync(CancellationToken cancellationToken = default)
         {
@@ -106,6 +110,31 @@ namespace Archipelago.Core
             }
 
             await _gameStateManager.LoadItemIndexAsync(cancellationToken);
+            await _gameStateManager.LoadCustomValuesAsync(cancellationToken);
+        }
+        public async Task SaveCustomValuesAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken = CombineTokens(cancellationToken);
+
+            if (_gameStateManager == null)
+            {
+                Log.Warning("GameStateManager not initialized");
+                return;
+            }
+
+            await _gameStateManager.SaveCustomValuesAsync(cancellationToken);
+        }
+        public async Task LoadCustomValuesAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken = CombineTokens(cancellationToken);
+
+            if (_gameStateManager == null)
+            {
+                Log.Warning("GameStateManager not initialized");
+                return;
+            }
+
+            await _gameStateManager.LoadCustomValuesAsync(cancellationToken);
         }
         private void PeriodicGameClientConnectionCheck(object? state)
         {
