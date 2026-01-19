@@ -23,9 +23,10 @@ namespace Archipelago.Core.Helpers
         private readonly string _saveId;
 
         private readonly SemaphoreSlim _saveItemSemaphore = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _saveCustomValuesSemaphore = new SemaphoreSlim(1, 1);
 
         public int SavedItemIndex { get; set; }
-        public Dictionary<string, object> CustomValues { get; private set; }
+        public Dictionary<string, string> CustomValues { get; private set; }
 
         public GameStateManager(ArchipelagoSession session, string gameName, string seed, int slot)
         {
@@ -34,7 +35,7 @@ namespace Archipelago.Core.Helpers
             _seed = seed ?? throw new ArgumentNullException(nameof(seed));
             _slot = slot;
 
-            CustomValues = new Dictionary<string, object>();
+            CustomValues = new Dictionary<string, string>();
         }
 
         public async Task SaveItemIndexAsync(CancellationToken cancellationToken = default)
@@ -78,7 +79,7 @@ namespace Archipelago.Core.Helpers
                 if (success && data != null)
                 {
                     SavedItemIndex = data;
-                    
+
                     Log.Verbose($"Loaded ItemIndex with {SavedItemIndex} items");
                 }
                 else
@@ -98,6 +99,66 @@ namespace Archipelago.Core.Helpers
         {
             updateAction(SavedItemIndex);
             await SaveItemIndexAsync(cancellationToken);
+        }
+        public async Task SaveCustomValuesAsync(CancellationToken cancellationToken = default)
+        {
+            if (!await _saveCustomValuesSemaphore.WaitAsync(0, cancellationToken))
+            {
+                Log.Verbose("Save already in progress, skipping");
+                return;
+            }
+
+            try
+            {
+                Log.Debug("Saving Custom values");
+
+                await _session.Socket.SendPacketAsync(CreateSetPacket("CustomValues", CustomValues));
+
+                Log.Debug("Custom values save completed");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to save Custom values: {ex.Message}");
+                throw;
+            }
+            finally
+            {
+                _saveCustomValuesSemaphore.Release();
+            }
+        }
+        public async Task ForceSaveCustomValuesAsync(CancellationToken cancellationToken = default)
+        {
+            await SaveCustomValuesAsync(cancellationToken);
+        }
+
+        public async Task LoadCustomValuesAsync(CancellationToken cancellationToken = default)
+        {
+            Log.Verbose("Loading Custom Values");
+
+            try
+            {
+                var (success, data) = await DeserializeFromStorageAsync<Dictionary<string, string>>("CustomValues");
+                if (success && data != null)
+                {
+                    CustomValues = data;
+                    Log.Verbose($"Loaded Custom Values with {CustomValues.Count} elements");
+                }
+                else
+                {
+                    CustomValues = new Dictionary<string, string>();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error loading Custom Values: {ex.Message}");
+                CustomValues = new Dictionary<string, string>();
+            }
+        }
+
+        public async Task UpdateAndSaveCustomValuesAsync(Action<Dictionary<string, string>> updateAction, CancellationToken cancellationToken = default)
+        {
+            updateAction(CustomValues);
+            await SaveCustomValuesAsync(cancellationToken);
         }
         private SetPacket CreateSetPacket<T>(string key, T value)
         {
