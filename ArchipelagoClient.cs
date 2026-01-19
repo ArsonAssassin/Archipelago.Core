@@ -39,6 +39,8 @@ namespace Archipelago.Core
         public Func<bool>? EnableLocationsCondition;
         public ItemsHandlingFlags? itemsFlags { get; set; }
         public int itemsReceivedCurrentSession { get; set; }
+        private Queue<ItemInfo> InProcessItems { get; set; }
+        private Queue<ItemInfo> ItemsReceived { get; set; }
         public bool isReadyToReceiveItems { get; set; }
         public ArchipelagoSession CurrentSession { get; set; }
         private CancellationTokenSource _monitorToken { get; set; } = new CancellationTokenSource();
@@ -255,6 +257,8 @@ namespace Archipelago.Core
             await LoadGameStateAsync(cancellationToken);
 
             itemsReceivedCurrentSession = 0;
+            ItemsReceived = [];
+            InProcessItems = [];
 
             IsLoggedIn = true;
             await Task.Run(() => Connected?.Invoke(this, new ConnectionChangedEventArgs(true)));
@@ -321,13 +325,29 @@ namespace Archipelago.Core
                 {
                     return;
                 }
+                Log.Logger.Debug("Attempting receive");
                 await _gameStateManager.LoadItemIndexAsync(cancellationToken);
                 
                 bool receivedNewItems = false;
 
                 ItemInfo newItemInfo = CurrentSession.Items.PeekItem();
+                // move all items into the InProcessItems queue
                 while (newItemInfo != null)
                 {
+                    InProcessItems.Enqueue(newItemInfo);
+                    CurrentSession.Items.DequeueItem();
+                    newItemInfo = CurrentSession.Items.PeekItem();
+                }
+                // for each item in the InProcessItems queue, try to process it.
+                bool abletopeek = InProcessItems.TryPeek(out newItemInfo);
+                Log.Logger.Debug($"able to peek? {abletopeek}");
+                Log.Logger.Debug($"ircs={itemsReceivedCurrentSession}, sii={_gameStateManager.SavedItemIndex}");
+                while (abletopeek && newItemInfo != null)
+                {
+                    if (!isReadyToReceiveItems) // In case switch is flipped while mid-receiving
+                    {
+                        return;
+                    }
                     itemsReceivedCurrentSession++;
                     bool receiveSuccess = true;
                     if (itemsReceivedCurrentSession > _gameStateManager.SavedItemIndex)
@@ -368,8 +388,9 @@ namespace Archipelago.Core
                         Log.Verbose($"Fast forwarding past previously received item {newItemInfo.ItemName}");
                     }
 
-                    CurrentSession.Items.DequeueItem();
-                    newItemInfo = CurrentSession.Items.PeekItem();
+                    ItemsReceived.Enqueue(newItemInfo); // add it to the persistent list
+                    InProcessItems.Dequeue(); // remove it from in process list
+                    abletopeek = InProcessItems.TryPeek(out newItemInfo); // get next item
                 }
 
                 if (receivedNewItems)
@@ -383,7 +404,7 @@ namespace Archipelago.Core
             }
         }
 
-        public async void ReceiveReady()
+        public async Task ReceiveReady()
         {
             isReadyToReceiveItems = true;
             await ReceiveItems();
@@ -713,6 +734,75 @@ namespace Archipelago.Core
             }
 
         }
+        // Request a new saveid. 
+        public async Task<byte> RequestNewSaveId()
+        {
+            byte newSaveId;
+            await _gameStateManager.LoadSaveIdsAsync();
+            if (_gameStateManager.SaveIds.Count > 0)
+            {
+                byte highestid = _gameStateManager.SaveIds.Max(x => ((byte)x));
+                if (highestid >= 255)
+                {
+                    Log.Logger.Error("Cannot have more than 255 saves");
+                    return 0; // return 0, an invalid saveid
+                }
+                newSaveId = (byte)(highestid + 1);
+            }
+            else
+            {
+                newSaveId = 1; // start at 1
+            }
+            _gameStateManager.SaveIds.Add(newSaveId);
+            Log.Logger.Debug($"Added saveid {newSaveId}");
+            await _gameStateManager.SaveSaveIdsAsync();
+            return newSaveId;
+        }
 
+        // Update our "saveid" value stored in the gamestate.
+        // Disables item receives, and resets the items in the receivable items list.
+        // Returns true if this was allowed, and false if it failed. 
+        public async Task<bool> UpdateSaveId(byte newsaveid)
+        {
+            if (!_gameStateManager.SaveIds.Contains(newsaveid))
+            {
+                Log.Logger.Error("Error: save id not in list");
+                return false;
+            }
+
+            string newsaveidString = newsaveid.ToString("X");
+            if (_gameStateManager.saveId == newsaveidString) // no update needed
+            {
+                Log.Logger.Debug("saveid is unchanged");
+                return true;
+            }
+            else
+            {
+                isReadyToReceiveItems = false; // in case we were recieving items, stop.
+                await _receiveItemSemaphore.WaitAsync(_cancellationTokenSource.Token); // wait for receives to finish
+                _receiveItemSemaphore.Release(); // release the semaphore immediately. The isReadyToReceive flag being false will prevent receives until we are done.
+
+                _gameStateManager.saveId = newsaveidString;
+                // First, save in process queue to a backup
+                Queue<ItemInfo> backup = InProcessItems;
+                // Then, reset the in process queue to those already received.
+                InProcessItems = ItemsReceived;
+
+                // To the already received items, append the backed up "in process" ones. This maintains the queue order.
+                while (backup.TryDequeue(out var item))
+                {
+                    InProcessItems.Enqueue(item);
+                }
+                // Empty the ItemsReceived list, so it can start getting items again.
+                ItemsReceived = new Queue<ItemInfo>();
+                Log.Logger.Debug($"IPI queue has {InProcessItems.Count} items");
+                Log.Logger.Debug($"IR queue has {ItemsReceived.Count} items");
+
+                // start from receiving "item 0" again
+                itemsReceivedCurrentSession = 0;
+                Log.Logger.Debug($"Updated saveid to {newsaveid}");
+            }
+            return true;
+        }
     }
 }

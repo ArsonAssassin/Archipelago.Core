@@ -20,13 +20,14 @@ namespace Archipelago.Core.Helpers
         private readonly string _gameName;
         private readonly string _seed;
         private readonly int _slot;
-        private readonly string _saveId;
 
         private readonly SemaphoreSlim _saveItemSemaphore = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _saveCustomValuesSemaphore = new SemaphoreSlim(1, 1);
 
         public int SavedItemIndex { get; set; }
         public Dictionary<string, string> CustomValues { get; private set; }
+        public List<byte> SaveIds { get; private set; }
+        public string saveId;
 
         public GameStateManager(ArchipelagoSession session, string gameName, string seed, int slot)
         {
@@ -34,6 +35,7 @@ namespace Archipelago.Core.Helpers
             _gameName = gameName ?? throw new ArgumentNullException(nameof(gameName));
             _seed = seed ?? throw new ArgumentNullException(nameof(seed));
             _slot = slot;
+            saveId = "";
 
             CustomValues = new Dictionary<string, string>();
         }
@@ -45,12 +47,17 @@ namespace Archipelago.Core.Helpers
                 Log.Verbose("Save already in progress, skipping");
                 return;
             }
-
             try
             {
                 Log.Debug("Saving Item index");
 
-                await _session.Socket.SendPacketAsync(CreateSetPacket("ItemIndex", SavedItemIndex));
+                string suffix = "";
+                if (saveId != "")
+                {
+                    suffix = $"_{saveId}";
+                }
+
+                await _session.Socket.SendPacketAsync(CreateSetPacket($"ItemIndex{suffix}", SavedItemIndex));
 
                 Log.Debug("Item index save completed");
             }
@@ -75,7 +82,13 @@ namespace Archipelago.Core.Helpers
 
             try
             {
-                var (success, data) = await DeserializeFromStorageAsync<int>("ItemIndex");
+                string suffix = "";
+                if (saveId != "")
+                {
+                    suffix = $"_{saveId}";
+                }
+
+                var (success, data) = await DeserializeFromStorageAsync<int>($"ItemIndex{suffix}");
                 if (success && data != null)
                 {
                     SavedItemIndex = data;
@@ -159,6 +172,58 @@ namespace Archipelago.Core.Helpers
         {
             updateAction(CustomValues);
             await SaveCustomValuesAsync(cancellationToken);
+        }
+        public async Task SaveSaveIdsAsync(CancellationToken cancellationToken = default)
+        {
+            if (!await _saveItemSemaphore.WaitAsync(0, cancellationToken))
+            {
+                Log.Verbose("Save already in progress, skipping");
+                return;
+            }
+
+            try
+            {
+                Log.Debug("Saving Save Ids");
+
+                await _session.Socket.SendPacketAsync(CreateSetPacket("SaveIds", SaveIds));
+
+                Log.Debug("Save Ids save completed");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to save Save Ids: {ex.Message}");
+                throw;
+            }
+            finally
+            {
+                _saveItemSemaphore.Release();
+            }
+        }
+
+        public async Task LoadSaveIdsAsync(CancellationToken cancellationToken = default)
+        {
+            Log.Verbose("Loading Save Ids");
+
+            try
+            {
+                var (success, data) = await DeserializeFromStorageAsync<List<byte>>("SaveIds");
+                if (success && data != null)
+                {
+                    SaveIds = data;
+
+                    Log.Verbose($"Loaded SaveIds with {SaveIds} items");
+                }
+                else
+                {
+                    Log.Warning("No existing SaveIds found - creating new");
+                    SaveIds = [];
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error loading SaveIds: {ex.Message}");
+                SaveIds = [];
+            }
         }
         private SetPacket CreateSetPacket<T>(string key, T value)
         {
