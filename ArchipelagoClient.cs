@@ -101,7 +101,7 @@ namespace Archipelago.Core
                 await _gameStateManager.SaveCustomValuesAsync(cancellationToken);
             }
         }
-        public async Task LoadGameStateAsync(CancellationToken cancellationToken = default)
+        public async Task LoadGameStateAsync(CancellationToken cancellationToken = default, bool loadItemIndex = true)
         {
             cancellationToken = CombineTokens(cancellationToken);
 
@@ -111,7 +111,10 @@ namespace Archipelago.Core
                 return;
             }
 
-            await _gameStateManager.LoadItemIndexAsync(cancellationToken);
+            if (loadItemIndex)
+            {
+                await _gameStateManager.LoadItemIndexAsync(cancellationToken);
+            }
             await _gameStateManager.LoadCustomValuesAsync(cancellationToken);
         }
         public async Task SaveCustomValuesAsync(CancellationToken cancellationToken = default)
@@ -254,7 +257,7 @@ namespace Archipelago.Core
             _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot);
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
 
-            await LoadGameStateAsync(cancellationToken);
+            await LoadGameStateAsync(cancellationToken, startReadyToReceiveItems);
 
             itemsReceivedCurrentSession = 0;
             ItemsReceived = [];
