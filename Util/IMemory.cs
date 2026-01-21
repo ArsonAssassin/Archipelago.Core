@@ -19,7 +19,8 @@ namespace Archipelago.Core.Util
         bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint dwFreeType);
         uint GetLastError();
         bool CloseHandle(IntPtr handle);
-	int GetPID(string procName);
+        int GetPID(string procName);
+        List<int> GetPIDs(string procName);
         IntPtr GetModuleHandle(string moduleName);
         string GetLastErrorMessage();
         uint Execute(nint v, nint address, uint timeoutSeconds);
