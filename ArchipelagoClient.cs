@@ -101,7 +101,7 @@ namespace Archipelago.Core
                 await _gameStateManager.SaveCustomValuesAsync(cancellationToken);
             }
         }
-        public async Task LoadGameStateAsync(CancellationToken cancellationToken = default)
+        public async Task LoadGameStateAsync(CancellationToken cancellationToken = default, bool loadItemIndex = true)
         {
             cancellationToken = CombineTokens(cancellationToken);
 
@@ -111,7 +111,10 @@ namespace Archipelago.Core
                 return;
             }
 
-            await _gameStateManager.LoadItemIndexAsync(cancellationToken);
+            if (loadItemIndex)
+            {
+                await _gameStateManager.LoadItemIndexAsync(cancellationToken);
+            }
             await _gameStateManager.LoadCustomValuesAsync(cancellationToken);
         }
         public async Task SaveCustomValuesAsync(CancellationToken cancellationToken = default)
@@ -213,7 +216,7 @@ namespace Archipelago.Core
             Log.Information($"Disconnected");
         }
 
-        public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default)
+        public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default, bool startReadyToReceiveItems = true)
         {
             cancellationToken = CombineTokens(cancellationToken);
             if (!IsConnected)
@@ -254,7 +257,7 @@ namespace Archipelago.Core
             _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot);
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
 
-            await LoadGameStateAsync(cancellationToken);
+            await LoadGameStateAsync(cancellationToken, startReadyToReceiveItems);
 
             itemsReceivedCurrentSession = 0;
             ItemsReceived = [];
@@ -262,7 +265,7 @@ namespace Archipelago.Core
 
             IsLoggedIn = true;
             await Task.Run(() => Connected?.Invoke(this, new ConnectionChangedEventArgs(true)));
-            isReadyToReceiveItems = true;
+            isReadyToReceiveItems = startReadyToReceiveItems;
             await ReceiveItems(cancellationToken);
 
             return;
@@ -764,6 +767,7 @@ namespace Archipelago.Core
         // Returns true if this was allowed, and false if it failed. 
         public async Task<bool> UpdateSaveId(byte newsaveid)
         {
+            await _gameStateManager.LoadSaveIdsAsync();
             if (!_gameStateManager.SaveIds.Contains(newsaveid))
             {
                 Log.Logger.Error("Error: save id not in list");

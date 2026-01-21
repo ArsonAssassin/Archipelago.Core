@@ -26,7 +26,7 @@ namespace Archipelago.Core.Helpers
 
         public int SavedItemIndex { get; set; }
         public Dictionary<string, string> CustomValues { get; private set; }
-        public List<byte> SaveIds { get; private set; }
+        public List<byte> SaveIds { get; private set; } = [];
         public string saveId;
 
         public GameStateManager(ArchipelagoSession session, string gameName, string seed, int slot)

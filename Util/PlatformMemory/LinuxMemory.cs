@@ -514,6 +514,16 @@ namespace Archipelago.Core.Util.PlatformMemory
             }
             return processes[0].Id;
         }
+        public List<int> GetPIDs(string procName)
+        {
+            Process[] processes = Process.GetProcessesByName(procName);
+            if (processes.Length < 1)
+            {
+                Log.Logger.Debug($"Process '{procName}' not found");
+                return [];
+            }
+            return processes.Select(x => x.Id).ToList();
+        }
         #endregion
 
         #region Module Information

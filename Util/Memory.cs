@@ -92,6 +92,18 @@ namespace Archipelago.Core.Util
                 return GetProcFromIdFromPartial(procName);
             }
         }
+        public static List<int> GetProcessIDs(string procName)
+        {
+            List<int> procPIDlist = PlatformImpl.GetPIDs(procName);
+            if (procPIDlist.Count > 0)
+            {
+                return procPIDlist;
+            }
+            else
+            {
+                return GetProcFromIdsFromPartial(procName);
+            }
+        }
         public static int GetProcFromIdFromPartial(string procPartialName)
         {
             Console.WriteLine($"Find Process ID {procPartialName}");
@@ -109,6 +121,26 @@ namespace Archipelago.Core.Util
             {
                 PlatformImpl.CloseHandle(CurrentHandle());
                 return 0;
+            }
+
+        }
+        public static List<int> GetProcFromIdsFromPartial(string procPartialName)
+        {
+            Console.WriteLine($"Find Process ID {procPartialName}");
+            Process[] allProcesses = Process.GetProcesses();
+
+            List<Process> foundProcesses = allProcesses
+                .Where(p => p.ProcessName.Contains(procPartialName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (foundProcesses.Count >= 1)
+            {
+                return foundProcesses.Select(x=> x.Id).ToList();
+            }
+            else
+            {
+                PlatformImpl.CloseHandle(CurrentHandle());
+                return [];
             }
 
         }
@@ -783,6 +815,7 @@ namespace Archipelago.Core.Util
         public static int XENIA_PROCESSID => GetProcessID("Xenia");
 
         public static int GetProcIdFromExe(string exe) => GetProcessID(exe);
+        public static List<int> GetProcIdsFromExe(string exe) => GetProcessIDs(exe);
         #endregion
 
         #region Utilities

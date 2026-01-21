@@ -179,9 +179,9 @@ namespace Archipelago.Core.Util.PlatformMemory
         {
             return CloseHandle_Win32(handle);
         }
-	public int GetPID(string procName)
-	{
-	    Process[] Processes = Process.GetProcessesByName(procName);
+        public int GetPID(string procName)
+        {
+            Process[] Processes = Process.GetProcessesByName(procName);
             if (Processes.Any(x => x.MainWindowHandle > 0))
             {
                 nint hWnd = Processes.First(x => x.MainWindowHandle > 0).MainWindowHandle;
@@ -190,11 +190,30 @@ namespace Archipelago.Core.Util.PlatformMemory
             }
             else
             {
-		//application is not running
-		return 0;
-	    }
-	}
-
+                //application is not running
+                return 0;
+            }
+        }
+        public List<int> GetPIDs(string procName)
+        {
+            Process[] Processes = Process.GetProcessesByName(procName);
+            List<int> result = [];
+            if (Processes.Any(x => x.MainWindowHandle > 0))
+            {
+                foreach (var window in Processes.Where(x => x.MainWindowHandle > 0))
+                {
+                    nint hWnd = window.MainWindowHandle;
+                    GetWindowThreadProcessId(hWnd, out int PID);
+                    result.Add(PID);
+                }
+                return result;
+            }
+            else
+            {
+                //application is not running
+                return [];
+            }
+        }
 
 
         #endregion
