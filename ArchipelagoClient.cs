@@ -213,7 +213,7 @@ namespace Archipelago.Core
             Log.Information($"Disconnected");
         }
 
-        public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default)
+        public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default, bool startReadyToReceiveItems = true)
         {
             cancellationToken = CombineTokens(cancellationToken);
             if (!IsConnected)
@@ -262,7 +262,7 @@ namespace Archipelago.Core
 
             IsLoggedIn = true;
             await Task.Run(() => Connected?.Invoke(this, new ConnectionChangedEventArgs(true)));
-            isReadyToReceiveItems = true;
+            isReadyToReceiveItems = startReadyToReceiveItems;
             await ReceiveItems(cancellationToken);
 
             return;
