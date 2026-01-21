@@ -764,6 +764,7 @@ namespace Archipelago.Core
         // Returns true if this was allowed, and false if it failed. 
         public async Task<bool> UpdateSaveId(byte newsaveid)
         {
+            await _gameStateManager.LoadSaveIdsAsync();
             if (!_gameStateManager.SaveIds.Contains(newsaveid))
             {
                 Log.Logger.Error("Error: save id not in list");
