@@ -47,7 +47,14 @@ namespace Archipelago.Core.Util
 
         public void Stop()
         {
-            cts?.Cancel();
+            try
+            {
+                cts?.Cancel();
+                ResumeProcess();
+            }
+            finally
+            {
+            }
         }
 
         private async Task SimulateLag(int minLagMs, int maxLagMs, int frequency, CancellationToken token)

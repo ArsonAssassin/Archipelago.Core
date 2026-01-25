@@ -6,11 +6,11 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Archipelago.Core.GameClients
+namespace Archipelago.Core.Helpers
 {
-    public class GenericGameClient : IGameClient
+    public class GameClient : IGameClient
     {
-        public GenericGameClient(string exeName)
+        public GameClient(string exeName)
         {
             ProcessName = exeName;
         }

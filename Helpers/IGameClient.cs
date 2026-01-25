@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Archipelago.Core
+namespace Archipelago.Core.Helpers
 {
     public interface IGameClient
     {
