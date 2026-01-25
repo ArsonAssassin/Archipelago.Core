@@ -28,27 +28,43 @@ namespace Archipelago.Core
         private readonly Timer _gameClientPollTimer;
         private GameStateManager? _gameStateManager;
         private GPSStateManager? _gpsStateManager;
+
+        public ItemManager ItemManager 
+        {
+            get 
+            {
+                return _itemManager; 
+            }
+            set 
+            {
+                if (_itemManager != value) 
+                {
+                    _itemManager = value; 
+                }
+            }
+        }
+        public LocationManager LocationManager
+        {
+            get
+            {
+                return _locationManager;
+            }
+            set
+            {
+                if (_locationManager != value)
+                {
+                    _locationManager = value;
+                }
+            }
+        }
         public bool IsConnected { get; set; }
         public bool IsLoggedIn { get; set; }
-        public event EventHandler<ItemReceivedEventArgs>? ItemReceived;
         public event EventHandler<ConnectionChangedEventArgs>? Disconnected;
         public event EventHandler<ConnectionChangedEventArgs>? Connected;
         public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
-        public event EventHandler<LocationCompletedEventArgs>? LocationCompleted;
         public event EventHandler? GameDisconnected;
-        public Func<bool>? EnableLocationsCondition;
         public ItemsHandlingFlags? itemsFlags { get; set; }
-        public int itemsReceivedCurrentSession { get; set; }
-        private Queue<ItemInfo> InProcessItems { get; set; }
-        private Queue<ItemInfo> ItemsReceived { get; set; }
-        public bool isReadyToReceiveItems { get; set; }
         public ArchipelagoSession CurrentSession { get; set; }
-        private CancellationTokenSource _monitorToken { get; set; } = new CancellationTokenSource();
-        private List<ILocation> _monitoredLocations { get; set; } = new List<ILocation>();
-
-        private Channel<ILocation> _locationsChannel;
-        private List<Task> _workerTasks = new List<Task>();
-        private const int WORKER_COUNT = 8;
         public GPSHandler GPSHandler
         {
             get => _gpsStateManager?.Handler;
@@ -69,13 +85,11 @@ namespace Archipelago.Core
 
         private IOverlayService? OverlayService { get; set; }
 
-        private readonly SemaphoreSlim _receiveItemSemaphore = new SemaphoreSlim(1, 1);
         private bool isOverlayEnabled = false;
-        private const int BATCH_SIZE = 25;
         private IGameClient _gameClient;
+        private ItemManager _itemManager;
+        private LocationManager _locationManager;
 
-        private CancellationTokenSource _cancellationTokenSource { get; set; } = new CancellationTokenSource();
-        private readonly List<CancellationTokenSource> _linkedTokenSources = new();
         public ArchipelagoClient(IGameClient gameClient)
         {
             Memory.CurrentProcId = gameClient.ProcId;
@@ -83,11 +97,10 @@ namespace Archipelago.Core
             _gameClient = gameClient;
             _gameClientPollTimer = new Timer(PeriodicGameClientConnectionCheck, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
             NativeLibraryLoader.Initialize();
-            this.isReadyToReceiveItems = false;
         }
         public async Task SaveGameStateAsync(CancellationToken cancellationToken = default)
         {
-            cancellationToken = CombineTokens(cancellationToken);
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
 
             if (_gameStateManager == null)
             {
@@ -103,7 +116,7 @@ namespace Archipelago.Core
         }
         public async Task LoadGameStateAsync(CancellationToken cancellationToken = default, bool loadItemIndex = true)
         {
-            cancellationToken = CombineTokens(cancellationToken);
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
 
             if (_gameStateManager == null)
             {
@@ -119,7 +132,7 @@ namespace Archipelago.Core
         }
         public async Task SaveCustomValuesAsync(CancellationToken cancellationToken = default)
         {
-            cancellationToken = CombineTokens(cancellationToken);
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
 
             if (_gameStateManager == null)
             {
@@ -131,7 +144,7 @@ namespace Archipelago.Core
         }
         public async Task LoadCustomValuesAsync(CancellationToken cancellationToken = default)
         {
-            cancellationToken = CombineTokens(cancellationToken);
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
 
             if (_gameStateManager == null)
             {
@@ -160,7 +173,7 @@ namespace Archipelago.Core
         }
         public async Task Connect(string host, string gameName, CancellationToken cancellationToken = default)
         {
-            cancellationToken = CombineTokens(cancellationToken);
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
             Disconnect();
             try
             {
@@ -186,7 +199,7 @@ namespace Archipelago.Core
         }
         private async void ItemReceivedHandler(ReceivedItemsHelper helper)
         {
-            await ReceiveItems(_cancellationTokenSource.Token);
+            await ReceiveItems();
         }
 
         private void Socket_SocketClosed(string reason)
@@ -204,7 +217,7 @@ namespace Archipelago.Core
                 CurrentSession.Socket.SocketClosed -= Socket_SocketClosed;
                 CurrentSession.MessageLog.OnMessageReceived -= HandleMessageReceived;
                 CurrentSession.Items.ItemReceived -= ItemReceivedHandler;
-                CancelMonitors();
+                LocationManager?.CancelMonitors();
                 _gpsStateManager?.Dispose();
                 _gpsStateManager = null;
                 _gameStateManager = null;
@@ -218,7 +231,7 @@ namespace Archipelago.Core
 
         public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default, bool startReadyToReceiveItems = true)
         {
-            cancellationToken = CombineTokens(cancellationToken);
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
             if (!IsConnected)
             {
                 Log.Error("Must be connected to the server to log in.  Please ensure your host is correct.");
@@ -228,7 +241,7 @@ namespace Archipelago.Core
             {
                 itemsFlags = itemsHandlingFlags;
             }
-            var loginResult = await CurrentSession.LoginAsync(GameName, playerName, itemsHandlingFlags ?? ItemsHandlingFlags.AllItems, Version.Parse("0.6.2"), password: password, requestSlotData: true);
+            var loginResult = await CurrentSession.LoginAsync(GameName, playerName, itemsHandlingFlags ?? ItemsHandlingFlags.AllItems, Version.Parse("0.6.5"), password: password, requestSlotData: true);
             Log.Verbose($"Login Result: {(loginResult.Successful ? "Success" : "Failed")}");
             if (loginResult.Successful)
             {
@@ -256,23 +269,22 @@ namespace Archipelago.Core
             }
             _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot);
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
-
+            ItemManager = new ItemManager(ref _gameStateManager);
+            LocationManager = new LocationManager(ref _gameStateManager);
             await LoadGameStateAsync(cancellationToken, startReadyToReceiveItems);
 
-            itemsReceivedCurrentSession = 0;
-            ItemsReceived = [];
-            InProcessItems = [];
 
             IsLoggedIn = true;
             await Task.Run(() => Connected?.Invoke(this, new ConnectionChangedEventArgs(true)));
-            isReadyToReceiveItems = startReadyToReceiveItems;
+            
+            ItemManager.Initialize(startReadyToReceiveItems);
             await ReceiveItems(cancellationToken);
 
             return;
         }
         public async void SendMessage(string message, CancellationToken cancellationToken = default)
         {
-            cancellationToken = CombineTokens(cancellationToken);
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
             await CurrentSession.Socket.SendPacketAsync(new SayPacket() { Text = message });
 
         }
@@ -298,275 +310,29 @@ namespace Archipelago.Core
                 Log.Error($"Could not send goal: {ex.Message}");
             }
         }
-        public void CancelMonitors()
+        public async Task MonitorLocationsAsync(List<ILocation> locations, CancellationToken cancellationToken = default)
         {
-            try
-            {
-                _monitorToken?.Cancel();
-                _locationsChannel?.Writer.Complete();
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Error cancelling monitors: {ex.Message}");
-            }
+            await LocationManager.MonitorLocationsAsync(CurrentSession, locations, cancellationToken);
+        }
+        public async Task SendLocationAsync(ILocation location, CancellationToken cancellationToken = default)
+        {
+            await LocationManager.SendLocationAsync(CurrentSession, location, cancellationToken);
         }
         private async Task ReceiveItems(CancellationToken cancellationToken = default)
         {
-            if (!isReadyToReceiveItems)
-            {
-                return;
-            }
-            if (_gameStateManager == null)
-            {
-                Log.Error("GameStateManager is null. Cannot receive items.");
-            }
-            cancellationToken = CombineTokens(cancellationToken);
-            await _receiveItemSemaphore.WaitAsync(cancellationToken);
-            try
-            {
-                if (!isReadyToReceiveItems) /* in case it was set false while waiting */
-                {
-                    return;
-                }
-                Log.Logger.Debug("Attempting receive");
-                await _gameStateManager.LoadItemIndexAsync(cancellationToken);
-                
-                bool receivedNewItems = false;
-
-                ItemInfo newItemInfo = CurrentSession.Items.PeekItem();
-                // move all items into the InProcessItems queue
-                while (newItemInfo != null)
-                {
-                    InProcessItems.Enqueue(newItemInfo);
-                    CurrentSession.Items.DequeueItem();
-                    newItemInfo = CurrentSession.Items.PeekItem();
-                }
-                // for each item in the InProcessItems queue, try to process it.
-                bool abletopeek = InProcessItems.TryPeek(out newItemInfo);
-                Log.Logger.Debug($"able to peek? {abletopeek}");
-                Log.Logger.Debug($"ircs={itemsReceivedCurrentSession}, sii={_gameStateManager.SavedItemIndex}");
-                while (abletopeek && newItemInfo != null)
-                {
-                    if (!isReadyToReceiveItems) // In case switch is flipped while mid-receiving
-                    {
-                        return;
-                    }
-                    itemsReceivedCurrentSession++;
-                    bool receiveSuccess = true;
-                    if (itemsReceivedCurrentSession > _gameStateManager.SavedItemIndex)
-                    {
-                        var item = new Item
-                        {
-                            Id = newItemInfo.ItemId,
-                            Name = newItemInfo.ItemName,
-                        };
-                        Log.Debug($"Adding new item {item.Name}");
-
-                        var args = new ItemReceivedEventArgs()
-                        {
-                            Item = item,
-                            LocationId = newItemInfo.LocationId,
-                            Player = newItemInfo.Player,
-                            Success = true  /* default to true - so game client can set it to false if it fails */
-                        };
-                        ItemReceived?.Invoke(this, args);
-                        receiveSuccess = args.Success;
-
-                        if (receiveSuccess)
-                        {
-                            _gameStateManager.SavedItemIndex++;
-                            receivedNewItems = true;
-                        }
-                        else
-                        {
-                            itemsReceivedCurrentSession--; /* undo the earlier increment */
-                            isReadyToReceiveItems = false;
-                            Log.Verbose($"Unable to receive item: {item.Name}.");
-                            /* Game client knows the item failed to receive, so they can reinitiate it when they want to. */
-                            break; /* leave the dequeueing loop */
-                        }
-                    }
-                    else
-                    {
-                        Log.Verbose($"Fast forwarding past previously received item {newItemInfo.ItemName}");
-                    }
-
-                    ItemsReceived.Enqueue(newItemInfo); // add it to the persistent list
-                    InProcessItems.Dequeue(); // remove it from in process list
-                    abletopeek = InProcessItems.TryPeek(out newItemInfo); // get next item
-                }
-
-                if (receivedNewItems)
-                {
-                    await _gameStateManager.SaveItemIndexAsync(cancellationToken);
-                }
-            }
-            finally
-            {
-                _receiveItemSemaphore.Release();
-            }
+            await ItemManager.ReceiveItems(CurrentSession, cancellationToken);           
         }
 
         public async Task ReceiveReady()
         {
-            isReadyToReceiveItems = true;
-            await ReceiveItems();
-        }
-        public async Task AddLocationAsync(ILocation location)
-        {
-
-            if (!_monitoredLocations.Any(x => x.Id == location.Id))
-            {
-                _monitoredLocations.Add(location);
-
-                if (_locationsChannel != null)
-                {
-                    _locationsChannel.Writer.TryWrite(location);
-                }
-            }
-
+            await ItemManager.ReceiveReady(CurrentSession);
         }
 
-        public async Task RemoveLocationAsync(ILocation location)
-        {
-            var confirmedLocation = _monitoredLocations.SingleOrDefault(x => x.Id == location.Id);
-            if (confirmedLocation != null)
-            {
-                Log.Verbose($"Location {location.Id} - {location.Name} removed from tracking");
-                _monitoredLocations.Remove(confirmedLocation);
-            }
-            else
-            {
-                Log.Warning($"Could not remove location {location.Id} - {location.Name} because it was not found in the list, or was found multiple times.");
-            }
-
-        }
-        public async Task MonitorLocations(List<ILocation> locations)
-        {
-            _locationsChannel = Channel.CreateUnbounded<ILocation>(new UnboundedChannelOptions
-            {
-                SingleReader = false,
-                SingleWriter = false,
-                AllowSynchronousContinuations = false
-            });
-
-            _monitoredLocations = locations;
-
-            foreach (var location in locations)
-            {
-                await _locationsChannel.Writer.WriteAsync(location, _monitorToken.Token);
-            }
-
-            await StartMonitoring();
-        }
-        private async Task StartMonitoring()
-        {
-            _workerTasks.Clear();
-
-            for (int i = 0; i < WORKER_COUNT; i++)
-            {
-                var workerId = i;
-                var task = Task.Run(async () => await ProcessLocationWorkerAsync(workerId), _monitorToken.Token);
-                _workerTasks.Add(task);
-            }
-
-            try
-            {
-                await Task.WhenAll(_workerTasks);
-            }
-            catch (OperationCanceledException)
-            {
-                Log.Debug("Location monitoring cancelled");
-            }
-        }
-        private async Task ProcessLocationWorkerAsync(int workerId)
-        {
-            var reader = _locationsChannel.Reader;
-            var recheckQueue = new Queue<ILocation>();
-
-            Log.Verbose($"Worker {workerId} started");
-
-            while (!_monitorToken.IsCancellationRequested)
-            {
-                try
-                {
-                    var batchChecked = 0;
-
-                    while (batchChecked < BATCH_SIZE && reader.TryRead(out var location))
-                    {
-                        if (_monitorToken.IsCancellationRequested) break;
-
-                        if (EnableLocationsCondition?.Invoke() ?? true)
-                        {
-                            try
-                            {
-                                if (location.Check())
-                                {
-                                    SendLocation(location, _monitorToken.Token);
-                                    Log.Verbose($"[Worker {workerId}] {location.Name} ({location.Id}) Completed");
-                                }
-                                else
-                                {
-                                    recheckQueue.Enqueue(location);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                Log.Error($"[Worker {workerId}] Error checking location {location.Id}: {ex.Message}");
-                                recheckQueue.Enqueue(location);
-                            }
-                        }
-                        else
-                        {
-                            recheckQueue.Enqueue(location);
-                        }
-
-                        batchChecked++;
-                    }
-
-                    while (recheckQueue.Count > 0)
-                    {
-                        var location = recheckQueue.Dequeue();
-                        await _locationsChannel.Writer.WriteAsync(location, _monitorToken.Token);
-                    }
-
-                    await Task.Delay(50, _monitorToken.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    Log.Verbose($"Worker {workerId} cancelled");
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"[Worker {workerId}] Unexpected error: {ex.Message}");
-                    await Task.Delay(1000, _monitorToken.Token); // Back off on error
-                }
-            }
-
-            Log.Debug($"Worker {workerId} stopped");
-        }
-
-        [Obsolete]
-        public async Task MonitorLocationsOld(List<ILocation> locations, CancellationToken cancellationToken = default)
-        {
-            cancellationToken = CombineTokens(cancellationToken);
-            var locationBatches = locations
-                .Select((location, index) => new { Location = location, Index = index })
-                .GroupBy(x => x.Index / BATCH_SIZE)
-                .Select(g => g.Select(x => x.Location).ToList())
-                .ToList();
-            Log.Debug($"Created {locationBatches.Count} batches");
-
-            var tasks = locationBatches.Select(x => MonitorBatch(x, _cancellationTokenSource.Token));
-            await Task.WhenAll(tasks);
-
-        }
         public void AddOverlayMessage(string message, CancellationToken cancellationToken = default)
         {
             if (isOverlayEnabled)
             {
-                cancellationToken = CombineTokens(cancellationToken);
+                cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
                 OverlayService.AddTextPopup(message);
             }
         }
@@ -574,7 +340,7 @@ namespace Archipelago.Core
         {
             if (isOverlayEnabled)
             {
-                cancellationToken = CombineTokens(cancellationToken);
+                cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
                 var spans = new List<ColoredTextSpan>();
                 foreach (var part in message.Parts)
                 {
@@ -587,65 +353,10 @@ namespace Archipelago.Core
                 OverlayService.AddRichTextPopup(spans);
             }
         }
-        [Obsolete]
-        private async Task MonitorBatch(List<ILocation> batch, CancellationToken token)
-        {
-            List<ILocation> completed = [];
-            while (!batch.All(x => completed.Any(y => y.Id == x.Id)))
-            {
-                if (token.IsCancellationRequested) return;
-                if (EnableLocationsCondition?.Invoke() ?? true)
-                {
-                    foreach (var location in batch)
-                    {
-                        var isCompleted = location.Check();// Helpers.CheckLocation(location);
-                        if (isCompleted)
-                        {
-                            completed.Add(location);
-                            //  Log.Logger.Information(JsonConvert.SerializeObject(location));
-                        }
-                    }
-                    if (completed.Count > 0)
-                    {
-                        foreach (var location in completed)
-                        {
-                            SendLocation(location, token);
-                            Log.Debug($"{location.Name} ({location.Id}) Completed");
-                            batch.Remove(location);
-                        }
-                    }
-                    completed.Clear();
-                }
-                await Task.Delay(500, token);
-            }
-        }
-        public async void SendLocation(ILocation location, CancellationToken cancellationToken = default)
-        {
-            cancellationToken = CombineTokens(cancellationToken);
-            if (CurrentSession == null)
-            {
-                Log.Error("Must be connected and logged in to send locations.");
-                return;
-            }
-            if (!(EnableLocationsCondition?.Invoke() ?? true))
-            {
-                Log.Debug("Location precondition not met, location not sent");
-                return;
-            }
-            Log.Debug($"Marking location {location.Id} as complete");
-            if (CurrentSession.Locations.AllLocationsChecked.Contains(location.Id))
-            {
-                Log.Debug($"Skipping location {location.Name} - already completed.");
-                return;
-            }
-            await CurrentSession.Locations.CompleteLocationChecksAsync([(long)location.Id]);
-            
-            LocationCompleted?.Invoke(this, new LocationCompletedEventArgs(location));
-        }
-
+        
         public async Task SaveGPSAsync(CancellationToken cancellationToken = default)
         {
-            cancellationToken = CombineTokens(cancellationToken);
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
 
             if (_gpsStateManager == null)
             {
@@ -656,36 +367,6 @@ namespace Archipelago.Core
             await _gpsStateManager.SaveAsync(cancellationToken);
         }
 
-        private CancellationToken CombineTokens(CancellationToken externalToken)
-        {
-            if (externalToken == default || externalToken == CancellationToken.None)
-            {
-                return _cancellationTokenSource.Token;
-            }
-
-            var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(
-                _cancellationTokenSource.Token,
-                externalToken
-            );
-
-            lock (_linkedTokenSources)
-            {
-                _linkedTokenSources.Add(linkedSource);
-            }
-
-            return linkedSource.Token;
-        }
-        public async Task ForceReloadAllItems(CancellationToken cancellationToken = default)
-        {
-            if (_gameStateManager == null)
-            {
-                Log.Warning("Cannot reload items - gameStateManager is null");
-                return;
-            }
-
-            _gameStateManager.SavedItemIndex = 0;
-            await _gameStateManager.ForceSaveItemIndexAsync(cancellationToken);
-        }
         public async Task SendBounceMessage(BouncePacket bouncePacket)
         {
             await CurrentSession.Socket.SendPacketAsync(bouncePacket);
@@ -701,12 +382,7 @@ namespace Archipelago.Core
 
             try
             {
-                CancelMonitors();
-
-                if (_workerTasks.Any())
-                {
-                    Task.WaitAll(_workerTasks.ToArray(), TimeSpan.FromSeconds(5));
-                }
+                LocationManager?.CancelMonitors();
 
                 SaveGameStateAsync().Wait(TimeSpan.FromSeconds(5));
             }
@@ -720,22 +396,8 @@ namespace Archipelago.Core
                 Disconnect();
             }
             _gameClientPollTimer?.Dispose();
-            _receiveItemSemaphore?.Dispose();
             _gpsStateManager?.Dispose();
             OverlayService?.Dispose();
-            _monitorToken?.Dispose();
-            _cancellationTokenSource?.Dispose();
-
-            // Dispose all linked token sources
-            lock (_linkedTokenSources)
-            {
-                foreach (var source in _linkedTokenSources)
-                {
-                    source?.Dispose();
-                }
-                _linkedTokenSources.Clear();
-            }
-
         }
         // Request a new saveid. 
         public async Task<byte> RequestNewSaveId()
@@ -782,28 +444,9 @@ namespace Archipelago.Core
             }
             else
             {
-                isReadyToReceiveItems = false; // in case we were recieving items, stop.
-                await _receiveItemSemaphore.WaitAsync(_cancellationTokenSource.Token); // wait for receives to finish
-                _receiveItemSemaphore.Release(); // release the semaphore immediately. The isReadyToReceive flag being false will prevent receives until we are done.
-
+                await ItemManager.StopReceiving();
                 _gameStateManager.saveId = newsaveidString;
-                // First, save in process queue to a backup
-                Queue<ItemInfo> backup = InProcessItems;
-                // Then, reset the in process queue to those already received.
-                InProcessItems = ItemsReceived;
-
-                // To the already received items, append the backed up "in process" ones. This maintains the queue order.
-                while (backup.TryDequeue(out var item))
-                {
-                    InProcessItems.Enqueue(item);
-                }
-                // Empty the ItemsReceived list, so it can start getting items again.
-                ItemsReceived = new Queue<ItemInfo>();
-                Log.Logger.Debug($"IPI queue has {InProcessItems.Count} items");
-                Log.Logger.Debug($"IR queue has {ItemsReceived.Count} items");
-
-                // start from receiving "item 0" again
-                itemsReceivedCurrentSession = 0;
+                await ItemManager.ResetItems();
                 Log.Logger.Debug($"Updated saveid to {newsaveid}");
             }
             return true;
