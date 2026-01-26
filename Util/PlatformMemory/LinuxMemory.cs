@@ -22,6 +22,10 @@ namespace Archipelago.Core.Util.PlatformMemory
         private const int PTRACE_ATTACH = 16;
         private const int PTRACE_DETACH = 17;
         private const int PTRACE_CONT = 7;
+        private const int PTRACE_SINGLESTEP = 9;
+
+        // signals
+        private const int SIGTRAP = 5;
 
         // Memory protection flags
         private const int PROT_NONE = 0x0;
@@ -162,27 +166,81 @@ namespace Archipelago.Core.Util.PlatformMemory
         #region Process Attachment
         private Dictionary<int, bool> _attachedProcesses = new Dictionary<int, bool>();
 
+        //These are common op-codes that are guaranteed to be at least 3 bytes long
+        private byte[][] saveInstructions =
+        [
+            [0xB8, 0xBF],
+            [0xC6],
+            [0xC7],
+            [0x80],
+            [0x81],
+            [0x83],
+            [0x48, 0x88],
+            [0x48, 0x89],
+            [0x48, 0x8A],
+            [0x48, 0x8B],
+            [0x48, 0x8C],
+            [0x48, 0x8E],
+            [0x48, 0x3D],
+            [0x3D],
+        ];
+
         private bool AttachToProcess(int pid)
         {
             if (_attachedProcesses.ContainsKey(pid) && _attachedProcesses[pid])
                 return true;
 
-            if (ptrace(PTRACE_ATTACH, pid, nint.Zero, nint.Zero) == -1)
-            {
-                Log.Logger.Error($"Failed to attach to process {pid}: {GetLastErrorMessage()}");
-                return false;
-            }
+            bool saveInstruction = false;
 
-            // Wait for the process to stop
-            int status;
-            if (waitpid(pid, out status, WUNTRACED) == -1)
+            while (!saveInstruction)
             {
-                Log.Logger.Error($"Failed to wait for process {pid}: {GetLastErrorMessage()}");
-                ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero);
-                return false;
-            }
+                if (ptrace(PTRACE_ATTACH, pid, nint.Zero, nint.Zero) == -1)
+                {
+                    Log.Logger.Error($"Failed to attach to process {pid}: {GetLastErrorMessage()}");
+                    return false;
+                }
 
+                // Wait for the process to stop
+                int status;
+                if (waitpid(pid, out status, 0) != pid)
+                {
+                    Log.Logger.Error($"Failed to wait for process {pid}: {GetLastErrorMessage()}");
+                    ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero);
+                    return false;
+                }
+                
+
+                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out user_regs_struct regs) == -1)
+                {
+                    Log.Logger.Error($"Failed to get registers: {GetLastErrorMessage()}");
+                    return false;
+                }
+
+                byte[] bytes = new byte[3];
+                if (!ReadProcessMemory(pid, regs.rip, bytes, 3, out _))
+                {
+                    Log.Logger.Error("Failed to read current bytes");
+                    return false;
+                }
+
+                if (saveInstructions.Any(instr => bytes.Take(instr.Length).SequenceEqual(instr)))
+                {
+                    Log.Logger.Debug($"Stopped bytes: {BitConverter.ToString(bytes)}");
+                    saveInstruction = true;
+                }
+                else
+                {
+                    //Detach and reattach trying to get to a different instruction
+                    if (ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero) == -1)
+                    {
+                        Log.Logger.Error($"Failed to detach from process {pid}: {GetLastErrorMessage()}");
+                        return false;
+                    }
+                    Thread.Sleep(50); //Pause this for a few ms so it doesn't immediately stop the remote process at the same instruction again
+                }
+            }
             _attachedProcesses[pid] = true;
+            Log.Logger.Debug($"Attached to process: {pid}");
             return true;
         }
 
@@ -198,7 +256,35 @@ namespace Archipelago.Core.Util.PlatformMemory
             }
 
             _attachedProcesses[pid] = false;
+            Log.Logger.Debug($"Detached from process: {pid}");
             return true;
+        }
+
+        static void WaitForInt3(int pid)
+        {
+            static bool WIFSTOPPED(int status) => (status & 0xFF) == 0x7F;
+            static int  WSTOPSIG(int status)   => (status >> 8) & 0xFF;
+
+            int status;
+
+            while (true)
+            {
+                int r = waitpid(pid, out status, WUNTRACED);
+                if (r < 0)
+                {
+                    int err = Marshal.GetLastWin32Error();
+                    if (err == 4) continue; // EINTR
+                    throw new System.ComponentModel.Win32Exception(err);
+                }
+
+                if (!WIFSTOPPED(status))
+                    continue;
+
+                int sig = WSTOPSIG(status);
+
+                if (sig == SIGTRAP)
+                    return;
+            }
         }
         #endregion
 
@@ -390,37 +476,210 @@ namespace Archipelago.Core.Util.PlatformMemory
             return prot;
         }
 
+        //syscall; int3;
+        private readonly byte[] syscallBytes = [0x0f, 0x05];
+        //call rax; int3;
+        private readonly byte[] callRaxBytes = [0xff, 0xd0, 0xcc];
+
         public nint VirtualAllocEx(nint hProcess, nint lpAddress, nint dwSize, uint flAllocationType, uint flProtect)
         {
             int pid = hProcess.ToInt32();
 
-            // For remote process memory allocation, we have limited options on Linux:
-            // 1. The target process must allocate memory itself
-            // 2. We can try to find existing free memory regions
-            // 3. We can inject code to call mmap
+            // Remote: Inject mmap syscall
+            Log.Logger.Debug($"Injecting mmap for allocation in process {pid}");
+            if (!AttachToProcess(pid)) return nint.Zero;
 
-            // For simplicity, we'll try to find a suitable free region
-            // This is a limitation compared to Windows VirtualAllocEx
-            Log.Logger.Warning($"VirtualAllocEx called for process {pid} - finding existing free region instead of allocating");
-
-            uint size = (uint)dwSize.ToInt64();
-            nint freeRegion = FindFreeRegionBelow4GB(hProcess, size);
-
-            if (freeRegion == nint.Zero)
+            try
             {
-                Log.Logger.Error($"Could not find suitable free memory region in process {pid}");
-            }
+                user_regs_struct originalRegs;
+                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out originalRegs) == -1)
+                {
+                    Log.Logger.Error($"Failed to get original registers: {GetLastErrorMessage()}");
+                    return nint.Zero;
+                }
 
-            return freeRegion;
+                ulong originalRip = originalRegs.rip;
+
+                // Save original bytes
+                byte[] originalBytes = new byte[syscallBytes.Length];
+                if (!ReadProcessMemory(hProcess, originalRip, originalBytes, syscallBytes.Length, out _))
+                {
+                    Log.Logger.Error("Failed to read original instruction bytes");
+                    return nint.Zero;
+                }
+
+                // Write shellcode
+                if (!WriteProcessMemory(hProcess, originalRip, syscallBytes, syscallBytes.Length, out _))
+                {
+                    Log.Logger.Error("Failed to write shellcode");
+                    return nint.Zero;
+                }
+
+                // Set up registers for mmap (syscall 9)
+                user_regs_struct regs = originalRegs;
+                regs.rax = 9;
+                regs.rdi = (ulong)lpAddress.ToInt64();  // addr hint
+                regs.rsi = (ulong)dwSize.ToInt64();  // length
+                regs.rdx = (ulong)ConvertWindowsProtectionToLinux(flProtect);  // prot
+                regs.r10 = (ulong)(MAP_PRIVATE | MAP_ANONYMOUS);  // flags = 0x22
+                regs.r8 = ulong.MaxValue;  // fd = -1
+                regs.r9 = 0;  // offset
+                regs.rip = originalRip;
+
+                if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref regs) == -1)
+                {
+                    Log.Logger.Error($"Failed to set registers: {GetLastErrorMessage()}");
+                    return nint.Zero;
+                }
+
+                // Single step
+                if (ptrace(PTRACE_SINGLESTEP, pid, nint.Zero, nint.Zero) == -1)
+                {
+                    Log.Logger.Error($"Failed to continue process: {GetLastErrorMessage()}");
+                    return nint.Zero;
+                }
+
+                // Wait
+                int status;
+                if (waitpid(pid, out status, 0) != pid)
+                {
+                    Log.Logger.Error($"Failed to wait for process {pid}: {GetLastErrorMessage()}");
+                    ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero);
+                    return nint.Zero;
+                }
+
+                // Get result
+                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out regs) == -1)
+                {
+                    Log.Logger.Error($"Failed to get registers after injection: {GetLastErrorMessage()}");
+                    return nint.Zero;
+                }
+
+                long allocatedAddr = (long)regs.rax;                
+                Log.Logger.Debug($"Allocated memory address: {allocatedAddr}");
+
+                if (allocatedAddr < 10)
+                {
+                    Log.Logger.Error($"mmap failed in remote process (return: {allocatedAddr})");
+                    return nint.Zero;
+                }
+
+                // Restore original bytes
+                if (!WriteProcessMemory(hProcess, originalRip, originalBytes, syscallBytes.Length, out _))
+                {
+                    Log.Logger.Error("Failed to restore original bytes");
+                    return nint.Zero;
+                }
+
+                // Restore original registers (re-execute interrupted instr)
+                if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref originalRegs) == -1)
+                {
+                    Log.Logger.Error($"Failed to restore registers: {GetLastErrorMessage()}");
+                    return nint.Zero;
+                }
+
+                return new nint(allocatedAddr);
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Allocation failed: {ex.Message}");
+                return nint.Zero;
+            }
+            finally
+            {
+                DetachFromProcess(pid);
+            }
         }
 
         public bool VirtualFreeEx(nint hProcess, nint lpAddress, nint dwSize, uint dwFreeType)
         {
-            // On Linux, we can't directly free memory in another process
-            // This would require code injection to call munmap
-            // For now, just return true (memory will be reclaimed when process exits)
-            Log.Logger.Debug($"VirtualFreeEx called - no-op on Linux (memory will be reclaimed on process exit)");
-            return true;
+            int pid = hProcess.ToInt32();
+
+            // Remote: Inject munmap syscall
+            Log.Logger.Debug($"Injecting munmap to free memory in process {pid}");
+            if (!AttachToProcess(pid)) return false;
+
+            try
+            {
+                user_regs_struct originalRegs;
+                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out originalRegs) == -1)
+                {
+                    Log.Logger.Error($"Failed to get original registers: {GetLastErrorMessage()}");
+                    return false;
+                }
+
+                ulong originalRip = originalRegs.rip;
+
+                // Save original bytes
+                byte[] originalBytes = new byte[syscallBytes.Length];
+                if (!ReadProcessMemory(hProcess, originalRip, originalBytes, syscallBytes.Length, out _))
+                {
+                    Log.Logger.Error("Failed to read original instruction bytes");
+                    return false;
+                }
+
+                // Write shellcode
+                if (!WriteProcessMemory(hProcess, originalRip, syscallBytes, syscallBytes.Length, out _))
+                {
+                    Log.Logger.Error("Failed to write shellcode");
+                    return false;
+                }
+
+                // Set up registers for munmap (syscall 9)
+                user_regs_struct regs = originalRegs;
+                regs.rax = 11;  // SYS_munmap
+                regs.rdi = (ulong)lpAddress.ToInt64();  // addr
+                regs.rsi = (ulong)dwSize.ToInt64();  // length
+                regs.eflags = 0;
+                regs.rip = originalRip;
+
+                if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref regs) == -1)
+                {
+                    Log.Logger.Error($"Failed to set registers: {GetLastErrorMessage()}");
+                    return false;
+                }
+
+                // Single step
+                if (ptrace(PTRACE_SINGLESTEP, pid, nint.Zero, nint.Zero) == -1)
+                {
+                    Log.Logger.Error($"Failed to continue process: {GetLastErrorMessage()}");
+                    return false;
+                }
+
+                // Wait
+                int status;
+                if (waitpid(pid, out status, 0) != pid)
+                {
+                    Log.Logger.Error($"Failed to wait for process {pid}: {GetLastErrorMessage()}");
+                    ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero);
+                    return false;
+                }
+
+                // Restore original bytes
+                if (!WriteProcessMemory(hProcess, originalRip, originalBytes, syscallBytes.Length, out _))
+                {
+                    Log.Logger.Error("Failed to restore original bytes");
+                    return false;
+                }
+
+                // Restore original registers (re-execute interrupted instr)
+                if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref originalRegs) == -1)
+                {
+                    Log.Logger.Error($"Failed to restore registers: {GetLastErrorMessage()}");
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Freeing failed: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                DetachFromProcess(pid);
+            }
         }
 
         public nint FindFreeRegionBelow4GB(nint processHandle, uint size)
@@ -506,6 +765,8 @@ namespace Archipelago.Core.Util.PlatformMemory
 
         public int GetPID(string procName)
         {
+            //On linux process names are capped at 16 bytes, so 15 characters + null terminator
+            procName = procName[..15];
             Process[] processes = Process.GetProcessesByName(procName);
             if (processes.Length < 1)
             {
@@ -516,6 +777,8 @@ namespace Archipelago.Core.Util.PlatformMemory
         }
         public List<int> GetPIDs(string procName)
         {
+            //On linux process names are capped at 16 bytes, so 15 characters + null terminator
+            procName = procName[..15];
             Process[] processes = Process.GetProcessesByName(procName);
             if (processes.Length < 1)
             {
@@ -647,96 +910,94 @@ namespace Archipelago.Core.Util.PlatformMemory
         {
             int pid = processHandle.ToInt32();
 
-            // Remote thread execution on Linux is complex and requires ptrace manipulation
-            // This is a simplified implementation
-
-            if (!AttachToProcess(pid))
-            {
-                Log.Logger.Error($"Failed to attach to process {pid} for execution");
-                return 0;
-            }
+            // Remote: Inject call
+            Log.Logger.Debug($"Injecting function call to {address}");
+            if (!AttachToProcess(pid)) return 0;
 
             try
             {
-                // Get current registers
-                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out user_regs_struct regs) == -1)
+                user_regs_struct originalRegs;
+                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out originalRegs) == -1)
                 {
-                    Log.Logger.Error($"Failed to get registers: {GetLastErrorMessage()}");
+                    Log.Logger.Error($"Failed to get original registers: {GetLastErrorMessage()}");
                     return 0;
                 }
 
-                // Save original instruction pointer
-                ulong originalRip = regs.rip;
+                ulong originalRip = originalRegs.rip;
 
-                // Set instruction pointer to our code
-                regs.rip = (ulong)address.ToInt64();
+                // Save original bytes
+                byte[] originalBytes = new byte[callRaxBytes.Length];
+                if (!ReadProcessMemory(processHandle, originalRip, originalBytes, callRaxBytes.Length, out _))
+                {
+                    Log.Logger.Error("Failed to read original instruction bytes");
+                    return 0;
+                }
 
-                // Set registers
+                // Write shellcode for call rax; int3;
+                if (!WriteProcessMemory(processHandle, originalRip, callRaxBytes, callRaxBytes.Length, out _))
+                {
+                    Log.Logger.Error("Failed to write shellcode");
+                    return 0;
+                }
+
+                // Set up registers for function call
+                user_regs_struct regs = originalRegs;
+                regs.rax = (ulong)address.ToInt64();
+                regs.rip = originalRip;
+                regs.eflags = 0;
+
                 if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref regs) == -1)
                 {
                     Log.Logger.Error($"Failed to set registers: {GetLastErrorMessage()}");
                     return 0;
                 }
 
-                // Continue execution
+                // Continue and wait for int3 trap
                 if (ptrace(PTRACE_CONT, pid, nint.Zero, nint.Zero) == -1)
                 {
                     Log.Logger.Error($"Failed to continue process: {GetLastErrorMessage()}");
                     return 0;
                 }
 
-                // Wait for execution to complete
-                // Note: This is simplified - in reality you'd need to handle signals and breakpoints
-                int status;
-                if (waitpid(pid, out status, 0) == -1)
+                WaitForInt3(pid);
+
+                // Restore original bytes
+                if (!WriteProcessMemory(processHandle, originalRip, originalBytes, callRaxBytes.Length, out _))
                 {
-                    Log.Logger.Error($"Failed to wait for process: {GetLastErrorMessage()}");
+                    Log.Logger.Error("Failed to restore original bytes");
                     return 0;
                 }
 
-                // Restore original instruction pointer
-                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out regs) == -1)
-                {
-                    Log.Logger.Error($"Failed to get registers after execution: {GetLastErrorMessage()}");
-                    return 0;
-                }
-
-                regs.rip = originalRip;
-                if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref regs) == -1)
+                // Restore original registers (execute interrupted instr)
+                if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref originalRegs) == -1)
                 {
                     Log.Logger.Error($"Failed to restore registers: {GetLastErrorMessage()}");
                     return 0;
                 }
-
+                
                 return 1;
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Error executing remote code: {ex.Message}");
+                Log.Logger.Error($"Allocation failed: {ex.Message}");
                 return 0;
             }
             finally
             {
-                // Note: We intentionally don't detach here since the caller might want to do more operations
-                // Detachment should happen when CloseHandle is called
+                DetachFromProcess(processHandle.ToInt32());
             }
         }
 
         public uint ExecuteCommand(nint processHandle, byte[] bytes, uint timeoutSeconds = 0xFFFFFFFF)
         {
-            int pid = processHandle.ToInt32();
-
-            // Find a suitable memory region
-            nint address = FindFreeRegionBelow4GB(processHandle, (uint)bytes.Length);
+            nint address = VirtualAllocEx(processHandle, nint.Zero, bytes.Length, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
             if (address == nint.Zero)
             {
-                Log.Logger.Error($"Failed to find memory region for execution");
+                Log.Logger.Error($"Failed to allocate memory: {GetLastErrorMessage()}");
                 return 0;
             }
-
             try
             {
-                // Write the code to memory
                 if (!WriteProcessMemory(processHandle, (ulong)address, bytes, bytes.Length, out nint bytesWritten))
                 {
                     Log.Logger.Error($"Failed to write bytes to memory: {GetLastErrorMessage()}");
@@ -745,7 +1006,7 @@ namespace Archipelago.Core.Util.PlatformMemory
 
                 // Execute the code
                 uint result = Execute(processHandle, address, timeoutSeconds);
-
+                
                 return result;
             }
             catch (Exception ex)
@@ -755,8 +1016,10 @@ namespace Archipelago.Core.Util.PlatformMemory
             }
             finally
             {
-                // Note: We can't easily free the memory on Linux without code injection
-                // The memory will be reclaimed when the process exits
+                if (!VirtualFreeEx(processHandle, address, nint.Zero, MEM_RELEASE))
+                {
+                    Log.Logger.Warning($"Failed to free memory: {GetLastErrorMessage()}");
+                }
             }
         }
         #endregion
