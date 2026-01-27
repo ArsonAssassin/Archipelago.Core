@@ -766,7 +766,7 @@ namespace Archipelago.Core.Util.PlatformMemory
         public int GetPID(string procName)
         {
             //On linux process names are capped at 16 bytes, so 15 characters + null terminator
-            procName = procName[..15];
+            procName = procName[..Math.Min(15, procName.Length)];
             Process[] processes = Process.GetProcessesByName(procName);
             if (processes.Length < 1)
             {
@@ -778,7 +778,7 @@ namespace Archipelago.Core.Util.PlatformMemory
         public List<int> GetPIDs(string procName)
         {
             //On linux process names are capped at 16 bytes, so 15 characters + null terminator
-            procName = procName[..15];
+            procName = procName[..Math.Min(15, procName.Length)];
             Process[] processes = Process.GetProcessesByName(procName);
             if (processes.Length < 1)
             {
