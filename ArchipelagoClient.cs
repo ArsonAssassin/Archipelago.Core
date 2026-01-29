@@ -114,7 +114,7 @@ namespace Archipelago.Core
                 await _gameStateManager.SaveCustomValuesAsync(cancellationToken);
             }
         }
-        public async Task LoadGameStateAsync(CancellationToken cancellationToken = default, bool loadItemIndex = true)
+        public async Task LoadGameStateAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
 
@@ -124,10 +124,6 @@ namespace Archipelago.Core
                 return;
             }
 
-            if (loadItemIndex)
-            {
-                await _gameStateManager.LoadItemIndexAsync(cancellationToken);
-            }
             await _gameStateManager.LoadCustomValuesAsync(cancellationToken);
         }
         public async Task SaveCustomValuesAsync(CancellationToken cancellationToken = default)
@@ -229,7 +225,7 @@ namespace Archipelago.Core
             Log.Information($"Disconnected");
         }
 
-        public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default, bool startReadyToReceiveItems = true)
+        public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default)
         {
             cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
             if (!IsConnected)
@@ -271,14 +267,13 @@ namespace Archipelago.Core
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
             ItemManager = new ItemManager(ref _gameStateManager);
             LocationManager = new LocationManager(ref _gameStateManager);
-            await LoadGameStateAsync(cancellationToken, startReadyToReceiveItems);
+            await LoadGameStateAsync(cancellationToken);
 
 
             IsLoggedIn = true;
             await Task.Run(() => Connected?.Invoke(this, new ConnectionChangedEventArgs(true)));
             
-            ItemManager.Initialize(startReadyToReceiveItems);
-            await ReceiveItems(cancellationToken);
+            ItemManager.Initialize();
 
             return;
         }

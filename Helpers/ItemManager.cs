@@ -24,12 +24,11 @@ namespace Archipelago.Core.Helpers
         {
             _gameStateManager = gameStateManager;
         }
-        public void Initialize(bool startReadyToReceiveItems)
+        public void Initialize()
         {
             itemsReceivedCurrentSession = 0;
             ItemsReceived = [];
             InProcessItems = [];
-            isReadyToReceiveItems = startReadyToReceiveItems;
         }
         internal async Task ReceiveItems(ArchipelagoSession currentSession, CancellationToken cancellationToken = default)
         {
