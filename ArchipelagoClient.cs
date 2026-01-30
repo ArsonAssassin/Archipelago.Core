@@ -180,7 +180,6 @@ namespace Archipelago.Core
 
                 CurrentSession.Socket.SocketClosed += Socket_SocketClosed;
                 CurrentSession.MessageLog.OnMessageReceived += HandleMessageReceived;
-                CurrentSession.Items.ItemReceived += ItemReceivedHandler;
                 /* Does this do anything? We haven't added a listener on PacketReceived */
                 CurrentSession.Socket.SendPacket(new SetNotifyPacket() { Keys = new[] { "ItemIndex" } });
                 CurrentSession.Socket.SendPacket(new SetNotifyPacket() { Keys = new[] { "CustomValues" } });
@@ -274,6 +273,7 @@ namespace Archipelago.Core
             await Task.Run(() => Connected?.Invoke(this, new ConnectionChangedEventArgs(true)));
             
             ItemManager.Initialize();
+            CurrentSession.Items.ItemReceived += ItemReceivedHandler;
 
             return;
         }
