@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Archipelago.MultiClient.Net.Enums;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -14,6 +15,7 @@ namespace Archipelago.Core.Models
         private string category;
         private long id;
         private bool isProgression;
+        public ItemFlags flags;
         public string Name
         {
             get => name;
@@ -52,15 +54,15 @@ namespace Archipelago.Core.Models
         }
         public bool IsProgression
         {
-            get => isProgression;
-            set
-            {
-                if (isProgression != value)
-                {
-                    isProgression = value;
-                    OnPropertyChanged();
-                }
-            }
+            get => ((flags & ItemFlags.Advancement) != 0);
+        }
+        public bool IsUseful
+        {
+            get => ((flags & ItemFlags.NeverExclude) != 0);
+        }
+        public bool IsTrap
+        {
+            get => ((flags & ItemFlags.Trap) != 0);
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
