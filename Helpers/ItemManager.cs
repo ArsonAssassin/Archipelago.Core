@@ -50,7 +50,7 @@ namespace Archipelago.Core.Helpers
                     return;
                 }
                 Log.Logger.Debug("Attempting receive");
-                await _gameStateManager.LoadItemIndexAsync(cancellationToken);
+                await _gameStateManager.LoadItemIndexAsync(cancellationToken).ConfigureAwait(false);
 
                 bool receivedNewItems = false;
 

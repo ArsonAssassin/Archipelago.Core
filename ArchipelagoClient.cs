@@ -266,7 +266,7 @@ namespace Archipelago.Core
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
             ItemManager = new ItemManager(ref _gameStateManager);
             LocationManager = new LocationManager(ref _gameStateManager);
-            await LoadGameStateAsync(cancellationToken);
+            await LoadGameStateAsync(cancellationToken).ConfigureAwait(false);
 
 
             IsLoggedIn = true;
@@ -280,7 +280,7 @@ namespace Archipelago.Core
         public async void SendMessage(string message, CancellationToken cancellationToken = default)
         {
             cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
-            await CurrentSession.Socket.SendPacketAsync(new SayPacket() { Text = message });
+            await CurrentSession.Socket.SendPacketAsync(new SayPacket() { Text = message }).ConfigureAwait(false);
 
         }
         private void HandleMessageReceived(LogMessage message)
