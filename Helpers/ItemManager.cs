@@ -1,5 +1,6 @@
 ﻿using Archipelago.Core.Models;
 using Archipelago.MultiClient.Net;
+using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Models;
 using Serilog;
 using System;
@@ -49,7 +50,7 @@ namespace Archipelago.Core.Helpers
                     return;
                 }
                 Log.Logger.Debug("Attempting receive");
-                await _gameStateManager.LoadItemIndexAsync(cancellationToken);
+                await _gameStateManager.LoadItemIndexAsync(cancellationToken).ConfigureAwait(false);
 
                 bool receivedNewItems = false;
 
@@ -79,6 +80,8 @@ namespace Archipelago.Core.Helpers
                         {
                             Id = newItemInfo.ItemId,
                             Name = newItemInfo.ItemName,
+                            flags = newItemInfo.Flags
+                            
                         };
                         Log.Debug($"Adding new item {item.Name}");
 

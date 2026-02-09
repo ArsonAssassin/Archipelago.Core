@@ -179,7 +179,7 @@ namespace Archipelago.Core.Helpers
                 Log.Debug($"Skipping location {location.Name} - already completed.");
                 return;
             }
-            await currentSession.Locations.CompleteLocationChecksAsync([(long)location.Id]);
+            await currentSession.Locations.CompleteLocationChecksAsync([(long)location.Id]).ConfigureAwait(false);
 
             LocationCompleted?.Invoke(this, new LocationCompletedEventArgs(location));
         }
