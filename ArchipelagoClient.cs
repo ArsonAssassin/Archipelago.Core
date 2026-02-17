@@ -213,6 +213,7 @@ namespace Archipelago.Core
                 CurrentSession.MessageLog.OnMessageReceived -= HandleMessageReceived;
                 CurrentSession.Items.ItemReceived -= ItemReceivedHandler;
                 LocationManager?.CancelMonitors();
+                ItemManager?.StopReceiving();
                 _gpsStateManager?.Dispose();
                 _gpsStateManager = null;
                 _gameStateManager = null;
@@ -265,14 +266,12 @@ namespace Archipelago.Core
             _gameStateManager = new GameStateManager(CurrentSession, GameName, Seed, currentSlot);
             _gpsStateManager = new GPSStateManager(CurrentSession, GameName, Seed, currentSlot);
             ItemManager = new ItemManager(ref _gameStateManager);
+            ItemManager.Initialize();
             LocationManager = new LocationManager(ref _gameStateManager);
             await LoadGameStateAsync(cancellationToken).ConfigureAwait(false);
 
-
             IsLoggedIn = true;
             await Task.Run(() => Connected?.Invoke(this, new ConnectionChangedEventArgs(true)));
-            
-            ItemManager.Initialize();
             CurrentSession.Items.ItemReceived += ItemReceivedHandler;
 
             return;
