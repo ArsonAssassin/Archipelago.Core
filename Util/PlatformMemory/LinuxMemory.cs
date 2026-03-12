@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -26,6 +27,11 @@ namespace Archipelago.Core.Util.PlatformMemory
 
         // signals
         private const int SIGTRAP = 5;
+        private const int SIGSTOP = 19;
+        private const int SIGSEGV = 11;
+        private const int SIGILL = 4;
+        private const int SIGBUS = 7;
+        private const int EINTR = 4;
 
         // Memory protection flags
         private const int PROT_NONE = 0x0;
@@ -36,7 +42,6 @@ namespace Archipelago.Core.Util.PlatformMemory
         // mmap flags
         private const int MAP_PRIVATE = 0x02;
         private const int MAP_ANONYMOUS = 0x20;
-        private const int MAP_FAILED = -1;
 
         // Wait status
         private const int WNOHANG = 1;
@@ -163,10 +168,77 @@ namespace Archipelago.Core.Util.PlatformMemory
         }
         #endregion
 
+        #region WINE / ptrace-scope Detection
+        private bool IsWineProcess(int pid)
+        {
+            try
+            {
+                string exePath = File.ReadAllText($"/proc/{pid}/comm").Trim();
+                if (exePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                string mapsPath = $"/proc/{pid}/maps";
+                if (File.Exists(mapsPath))
+                {
+                    string maps = File.ReadAllText(mapsPath);
+                    if (maps.Contains("wine", StringComparison.OrdinalIgnoreCase) ||
+                        maps.Contains("proton", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+
+                string exeLink = $"/proc/{pid}/exe";
+                if (File.Exists(exeLink))
+                {
+                    string exeTarget = new FileInfo(exeLink).LinkTarget ?? string.Empty;
+                    if (exeTarget.Contains("wine", StringComparison.OrdinalIgnoreCase) ||
+                        exeTarget.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            catch {  }
+            return false;
+        }
+
+        private bool CheckPtraceScope(int pid)
+        {
+            const string ptraceScopePath = "/proc/sys/kernel/yama/ptrace_scope";
+            if (!File.Exists(ptraceScopePath))
+                return true; 
+
+            if (!int.TryParse(File.ReadAllText(ptraceScopePath).Trim(), out int scope))
+                return true;
+
+            switch (scope)
+            {
+                case 0:
+                    return true;
+                case 1:
+                    Log.Logger.Warning(
+                        $"ptrace_scope=1: ptrace is restricted to parent processes. " +
+                        $"To allow tracing process {pid}, either run as root, " +
+                        $"grant CAP_SYS_PTRACE, or set: echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope");
+                    return true;
+                case 2:
+                    Log.Logger.Error(
+                        $"ptrace_scope=2: ptrace is restricted to root/CAP_SYS_PTRACE only. " +
+                        $"Remote execution will not work without elevated privileges.");
+                    return false;
+                case 3:
+                    Log.Logger.Error(
+                        $"ptrace_scope=3: ptrace is completely disabled on this system. " +
+                        $"Remote execution cannot function.");
+                    return false;
+                default:
+                    return true;
+            }
+        }
+
+        #endregion
+
         #region Process Attachment
         private Dictionary<int, bool> _attachedProcesses = new Dictionary<int, bool>();
 
-        //These are common op-codes that are guaranteed to be at least 3 bytes long
+        // These are common op-codes that are guaranteed to be at least 3 bytes long
         private byte[][] saveInstructions =
         [
             [0xB8, 0xBF],
@@ -190,6 +262,17 @@ namespace Archipelago.Core.Util.PlatformMemory
             if (_attachedProcesses.ContainsKey(pid) && _attachedProcesses[pid])
                 return true;
 
+            if (IsWineProcess(pid))
+            {
+                Log.Logger.Error(
+                    $"Process {pid} appears to be a WINE/Proton process. " +
+                    $"ptrace-based code injection does not work against WINE processes from a native Linux host.");
+                return false;
+            }
+
+            if (!CheckPtraceScope(pid))
+                return false;
+
             bool saveInstruction = false;
 
             while (!saveInstruction)
@@ -208,11 +291,11 @@ namespace Archipelago.Core.Util.PlatformMemory
                     ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero);
                     return false;
                 }
-                
 
                 if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out user_regs_struct regs) == -1)
                 {
                     Log.Logger.Error($"Failed to get registers: {GetLastErrorMessage()}");
+                    ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero);
                     return false;
                 }
 
@@ -220,6 +303,7 @@ namespace Archipelago.Core.Util.PlatformMemory
                 if (!ReadProcessMemory(pid, regs.rip, bytes, 3, out _))
                 {
                     Log.Logger.Error("Failed to read current bytes");
+                    ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero);
                     return false;
                 }
 
@@ -230,15 +314,16 @@ namespace Archipelago.Core.Util.PlatformMemory
                 }
                 else
                 {
-                    //Detach and reattach trying to get to a different instruction
+                    // Detach and reattach trying to get to a different instruction
                     if (ptrace(PTRACE_DETACH, pid, nint.Zero, nint.Zero) == -1)
                     {
                         Log.Logger.Error($"Failed to detach from process {pid}: {GetLastErrorMessage()}");
                         return false;
                     }
-                    Thread.Sleep(50); //Pause this for a few ms so it doesn't immediately stop the remote process at the same instruction again
+                    Thread.Sleep(50);
                 }
             }
+
             _attachedProcesses[pid] = true;
             Log.Logger.Debug($"Attached to process: {pid}");
             return true;
@@ -260,10 +345,10 @@ namespace Archipelago.Core.Util.PlatformMemory
             return true;
         }
 
-        static void WaitForInt3(int pid)
+        private static bool WaitForInt3(int pid)
         {
             static bool WIFSTOPPED(int status) => (status & 0xFF) == 0x7F;
-            static int  WSTOPSIG(int status)   => (status >> 8) & 0xFF;
+            static int WSTOPSIG(int status) => (status >> 8) & 0xFF;
 
             int status;
 
@@ -273,8 +358,8 @@ namespace Archipelago.Core.Util.PlatformMemory
                 if (r < 0)
                 {
                     int err = Marshal.GetLastWin32Error();
-                    if (err == 4) continue; // EINTR
-                    throw new System.ComponentModel.Win32Exception(err);
+                    if (err == EINTR) continue; // interrupted by signal, retry
+                    throw new Win32Exception(err, $"waitpid failed: error {err}");
                 }
 
                 if (!WIFSTOPPED(status))
@@ -283,7 +368,20 @@ namespace Archipelago.Core.Util.PlatformMemory
                 int sig = WSTOPSIG(status);
 
                 if (sig == SIGTRAP)
-                    return;
+                    return true; // hit our int3
+
+                // Fatal signal in the remote process — log and bail to avoid hanging
+                if (sig == SIGSEGV || sig == SIGILL || sig == SIGBUS)
+                {
+                    Log.Logger.Error(
+                        $"Remote process received fatal signal {sig} during Execute. " +
+                        $"The injected code likely crashed (stack misalignment or bad address). " +
+                        $"Detaching to allow the OS to handle the signal.");
+                    return false;
+                }
+
+                // Other signals (e.g. SIGSTOP from an external debugger) — log but keep waiting
+                Log.Logger.Warning($"Remote process received unexpected signal {sig} during Execute — continuing to wait.");
             }
         }
         #endregion
@@ -302,7 +400,7 @@ namespace Archipelago.Core.Util.PlatformMemory
 
             try
             {
-                // Try process_vm_readv first (more efficient)
+                // Try process_vm_readv first (more efficient, no ptrace needed)
                 GCHandle bufferHandle = GCHandle.Alloc(lpBuffer, GCHandleType.Pinned);
                 try
                 {
@@ -326,7 +424,6 @@ namespace Archipelago.Core.Util.PlatformMemory
                         return true;
                     }
 
-                    // If process_vm_readv fails, fall back to /proc/pid/mem
                     Log.Logger.Debug($"process_vm_readv failed: {GetLastErrorMessage()}, falling back to /proc/{pid}/mem");
                 }
                 finally
@@ -334,17 +431,15 @@ namespace Archipelago.Core.Util.PlatformMemory
                     bufferHandle.Free();
                 }
 
-                // Fallback: Use /proc/pid/mem
+                // Fallback: /proc/pid/mem
                 string memPath = $"/proc/{pid}/mem";
                 if (File.Exists(memPath))
                 {
-                    using (FileStream fs = new FileStream(memPath, FileMode.Open, FileAccess.Read))
-                    {
-                        fs.Seek((long)lpBaseAddress, SeekOrigin.Begin);
-                        int bytesRead = fs.Read(lpBuffer, 0, dwSize);
-                        lpNumberOfBytesRead = new nint(bytesRead);
-                        return bytesRead > 0;
-                    }
+                    using FileStream fs = new FileStream(memPath, FileMode.Open, FileAccess.Read);
+                    fs.Seek((long)lpBaseAddress, SeekOrigin.Begin);
+                    int bytesRead = fs.Read(lpBuffer, 0, dwSize);
+                    lpNumberOfBytesRead = new nint(bytesRead);
+                    return bytesRead > 0;
                 }
 
                 Log.Logger.Error($"Could not access memory for process {pid}");
@@ -370,7 +465,6 @@ namespace Archipelago.Core.Util.PlatformMemory
 
             try
             {
-                // Try process_vm_writev first (more efficient)
                 GCHandle bufferHandle = GCHandle.Alloc(lpBuffer, GCHandleType.Pinned);
                 try
                 {
@@ -401,17 +495,15 @@ namespace Archipelago.Core.Util.PlatformMemory
                     bufferHandle.Free();
                 }
 
-                // Fallback: Use /proc/pid/mem
+                // Fallback: /proc/pid/mem
                 string memPath = $"/proc/{pid}/mem";
                 if (File.Exists(memPath))
                 {
-                    using (FileStream fs = new FileStream(memPath, FileMode.Open, FileAccess.Write))
-                    {
-                        fs.Seek((long)lpBaseAddress, SeekOrigin.Begin);
-                        fs.Write(lpBuffer, 0, dwSize);
-                        lpNumberOfBytesWritten = new nint(dwSize);
-                        return true;
-                    }
+                    using FileStream fs = new FileStream(memPath, FileMode.Open, FileAccess.Write);
+                    fs.Seek((long)lpBaseAddress, SeekOrigin.Begin);
+                    fs.Write(lpBuffer, 0, dwSize);
+                    lpNumberOfBytesWritten = new nint(dwSize);
+                    return true;
                 }
 
                 Log.Logger.Error($"Could not access memory for process {pid}");
@@ -426,7 +518,6 @@ namespace Archipelago.Core.Util.PlatformMemory
 
         public nint OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId)
         {
-            // On Linux, we just verify the process exists and return the PID
             try
             {
                 Process.GetProcessById(dwProcessId);
@@ -444,55 +535,43 @@ namespace Archipelago.Core.Util.PlatformMemory
             lpflOldProtect = 0;
             int pid = processH.ToInt32();
 
-            // This is problematic on Linux - mprotect only works on the current process
-            // For remote processes, we would need to inject code to call mprotect
-            // For now, we'll log a warning and return true (assuming permissions are sufficient)
             Log.Logger.Warning($"VirtualProtectEx called for remote process {pid} - this operation has limited support on Linux");
 
-            // Convert Windows protection flags to Linux flags
             int prot = ConvertWindowsProtectionToLinux(flNewProtect);
 
-            // If this is the current process, we can use mprotect directly
             if (pid == Process.GetCurrentProcess().Id)
-            {
                 return mprotect(lpAddress, (ulong)dwSize.ToInt64(), prot) == 0;
-            }
 
-            // For remote processes, we can't easily change protection without code injection
-            // Return true and hope the memory is already accessible
+            // For remote processes we rely on the memory already being accessible via mmap injection
             return true;
         }
 
         private int ConvertWindowsProtectionToLinux(uint windowsProtect)
         {
             int prot = 0;
-
-            if ((windowsProtect & 0x02) != 0) prot |= PROT_READ; // PAGE_READONLY
-            if ((windowsProtect & 0x04) != 0) prot |= PROT_READ | PROT_WRITE; // PAGE_READWRITE
-            if ((windowsProtect & 0x10) != 0) prot |= PROT_READ | PROT_EXEC; // PAGE_EXECUTE_READ
+            if ((windowsProtect & 0x02) != 0) prot |= PROT_READ;                      // PAGE_READONLY
+            if ((windowsProtect & 0x04) != 0) prot |= PROT_READ | PROT_WRITE;         // PAGE_READWRITE
+            if ((windowsProtect & 0x10) != 0) prot |= PROT_READ | PROT_EXEC;          // PAGE_EXECUTE_READ
             if ((windowsProtect & 0x20) != 0) prot |= PROT_READ | PROT_WRITE | PROT_EXEC; // PAGE_EXECUTE_READWRITE
-            if ((windowsProtect & 0x40) != 0) prot |= PROT_READ | PROT_WRITE | PROT_EXEC; // PAGE_EXECUTE_READWRITE (alternate)
-
+            if ((windowsProtect & 0x40) != 0) prot |= PROT_READ | PROT_WRITE | PROT_EXEC; // PAGE_EXECUTE_READWRITE (alt)
             return prot;
         }
 
-        //syscall; int3;
+        // syscall; — used to inject mmap/munmap via single-step
         private readonly byte[] syscallBytes = [0x0f, 0x05];
-        //call rax; int3;
+        // call rax; int3; — used to invoke an arbitrary function then trap back
         private readonly byte[] callRaxBytes = [0xff, 0xd0, 0xcc];
 
         public nint VirtualAllocEx(nint hProcess, nint lpAddress, nint dwSize, uint flAllocationType, uint flProtect)
         {
             int pid = hProcess.ToInt32();
 
-            // Remote: Inject mmap syscall
             Log.Logger.Debug($"Injecting mmap for allocation in process {pid}");
             if (!AttachToProcess(pid)) return nint.Zero;
 
             try
             {
-                user_regs_struct originalRegs;
-                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out originalRegs) == -1)
+                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out user_regs_struct originalRegs) == -1)
                 {
                     Log.Logger.Error($"Failed to get original registers: {GetLastErrorMessage()}");
                     return nint.Zero;
@@ -500,7 +579,6 @@ namespace Archipelago.Core.Util.PlatformMemory
 
                 ulong originalRip = originalRegs.rip;
 
-                // Save original bytes
                 byte[] originalBytes = new byte[syscallBytes.Length];
                 if (!ReadProcessMemory(hProcess, originalRip, originalBytes, syscallBytes.Length, out _))
                 {
@@ -508,22 +586,21 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return nint.Zero;
                 }
 
-                // Write shellcode
                 if (!WriteProcessMemory(hProcess, originalRip, syscallBytes, syscallBytes.Length, out _))
                 {
-                    Log.Logger.Error("Failed to write shellcode");
+                    Log.Logger.Error("Failed to write syscall bytes");
                     return nint.Zero;
                 }
 
-                // Set up registers for mmap (syscall 9)
+                // Set up registers for mmap (syscall number 9)
                 user_regs_struct regs = originalRegs;
-                regs.rax = 9;
-                regs.rdi = (ulong)lpAddress.ToInt64();  // addr hint
-                regs.rsi = (ulong)dwSize.ToInt64();  // length
-                regs.rdx = (ulong)ConvertWindowsProtectionToLinux(flProtect);  // prot
-                regs.r10 = (ulong)(MAP_PRIVATE | MAP_ANONYMOUS);  // flags = 0x22
-                regs.r8 = ulong.MaxValue;  // fd = -1
-                regs.r9 = 0;  // offset
+                regs.rax = 9;                                                          // SYS_mmap
+                regs.rdi = (ulong)lpAddress.ToInt64();                                 // addr hint (0 = any)
+                regs.rsi = (ulong)dwSize.ToInt64();                                    // length
+                regs.rdx = (ulong)ConvertWindowsProtectionToLinux(flProtect);          // prot
+                regs.r10 = (ulong)(MAP_PRIVATE | MAP_ANONYMOUS);                       // flags
+                regs.r8 = ulong.MaxValue;                                             // fd = -1
+                regs.r9 = 0;                                                          // offset
                 regs.rip = originalRip;
 
                 if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref regs) == -1)
@@ -532,14 +609,12 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return nint.Zero;
                 }
 
-                // Single step
                 if (ptrace(PTRACE_SINGLESTEP, pid, nint.Zero, nint.Zero) == -1)
                 {
-                    Log.Logger.Error($"Failed to continue process: {GetLastErrorMessage()}");
+                    Log.Logger.Error($"Failed to single-step process: {GetLastErrorMessage()}");
                     return nint.Zero;
                 }
 
-                // Wait
                 int status;
                 if (waitpid(pid, out status, 0) != pid)
                 {
@@ -548,41 +623,34 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return nint.Zero;
                 }
 
-                // Get result
                 if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out regs) == -1)
                 {
-                    Log.Logger.Error($"Failed to get registers after injection: {GetLastErrorMessage()}");
+                    Log.Logger.Error($"Failed to get registers after mmap: {GetLastErrorMessage()}");
                     return nint.Zero;
                 }
 
-                long allocatedAddr = (long)regs.rax;                
-                Log.Logger.Debug($"Allocated memory address: {allocatedAddr}");
+                long allocatedAddr = (long)regs.rax;
+                Log.Logger.Debug($"mmap result: 0x{allocatedAddr:X}");
 
-                if (allocatedAddr < 10)
+                // mmap returns a small negative errno on failure (e.g. -12 for ENOMEM)
+                if (allocatedAddr < 0 || allocatedAddr < 0x1000)
                 {
                     Log.Logger.Error($"mmap failed in remote process (return: {allocatedAddr})");
                     return nint.Zero;
                 }
 
-                // Restore original bytes
+                // Restore original bytes then registers so the thread re-executes from where it paused
                 if (!WriteProcessMemory(hProcess, originalRip, originalBytes, syscallBytes.Length, out _))
-                {
-                    Log.Logger.Error("Failed to restore original bytes");
-                    return nint.Zero;
-                }
+                    Log.Logger.Error("Failed to restore original bytes after mmap");
 
-                // Restore original registers (re-execute interrupted instr)
                 if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref originalRegs) == -1)
-                {
-                    Log.Logger.Error($"Failed to restore registers: {GetLastErrorMessage()}");
-                    return nint.Zero;
-                }
+                    Log.Logger.Error($"Failed to restore registers after mmap: {GetLastErrorMessage()}");
 
                 return new nint(allocatedAddr);
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Allocation failed: {ex.Message}");
+                Log.Logger.Error($"VirtualAllocEx failed: {ex.Message}");
                 return nint.Zero;
             }
             finally
@@ -595,14 +663,12 @@ namespace Archipelago.Core.Util.PlatformMemory
         {
             int pid = hProcess.ToInt32();
 
-            // Remote: Inject munmap syscall
             Log.Logger.Debug($"Injecting munmap to free memory in process {pid}");
             if (!AttachToProcess(pid)) return false;
 
             try
             {
-                user_regs_struct originalRegs;
-                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out originalRegs) == -1)
+                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out user_regs_struct originalRegs) == -1)
                 {
                     Log.Logger.Error($"Failed to get original registers: {GetLastErrorMessage()}");
                     return false;
@@ -610,7 +676,6 @@ namespace Archipelago.Core.Util.PlatformMemory
 
                 ulong originalRip = originalRegs.rip;
 
-                // Save original bytes
                 byte[] originalBytes = new byte[syscallBytes.Length];
                 if (!ReadProcessMemory(hProcess, originalRip, originalBytes, syscallBytes.Length, out _))
                 {
@@ -618,19 +683,16 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return false;
                 }
 
-                // Write shellcode
                 if (!WriteProcessMemory(hProcess, originalRip, syscallBytes, syscallBytes.Length, out _))
                 {
-                    Log.Logger.Error("Failed to write shellcode");
+                    Log.Logger.Error("Failed to write syscall bytes");
                     return false;
                 }
 
-                // Set up registers for munmap (syscall 9)
                 user_regs_struct regs = originalRegs;
-                regs.rax = 11;  // SYS_munmap
-                regs.rdi = (ulong)lpAddress.ToInt64();  // addr
-                regs.rsi = (ulong)dwSize.ToInt64();  // length
-                regs.eflags = 0;
+                regs.rax = 11;                              // SYS_munmap
+                regs.rdi = (ulong)lpAddress.ToInt64();      // addr
+                regs.rsi = (ulong)dwSize.ToInt64();         // length
                 regs.rip = originalRip;
 
                 if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref regs) == -1)
@@ -639,14 +701,12 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return false;
                 }
 
-                // Single step
                 if (ptrace(PTRACE_SINGLESTEP, pid, nint.Zero, nint.Zero) == -1)
                 {
-                    Log.Logger.Error($"Failed to continue process: {GetLastErrorMessage()}");
+                    Log.Logger.Error($"Failed to single-step process: {GetLastErrorMessage()}");
                     return false;
                 }
 
-                // Wait
                 int status;
                 if (waitpid(pid, out status, 0) != pid)
                 {
@@ -655,25 +715,17 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return false;
                 }
 
-                // Restore original bytes
                 if (!WriteProcessMemory(hProcess, originalRip, originalBytes, syscallBytes.Length, out _))
-                {
-                    Log.Logger.Error("Failed to restore original bytes");
-                    return false;
-                }
+                    Log.Logger.Error("Failed to restore original bytes after munmap");
 
-                // Restore original registers (re-execute interrupted instr)
                 if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref originalRegs) == -1)
-                {
-                    Log.Logger.Error($"Failed to restore registers: {GetLastErrorMessage()}");
-                    return false;
-                }
+                    Log.Logger.Error($"Failed to restore registers after munmap: {GetLastErrorMessage()}");
 
                 return true;
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Freeing failed: {ex.Message}");
+                Log.Logger.Error($"VirtualFreeEx failed: {ex.Message}");
                 return false;
             }
             finally
@@ -698,7 +750,6 @@ namespace Archipelago.Core.Util.PlatformMemory
                 const ulong MAX_32BIT = 0x7FFE0000;
                 var lines = File.ReadAllLines(mapsPath);
 
-                // Parse memory regions
                 List<(ulong start, ulong end)> regions = new List<(ulong, ulong)>();
                 foreach (var line in lines)
                 {
@@ -711,18 +762,13 @@ namespace Archipelago.Core.Util.PlatformMemory
                     ulong start = Convert.ToUInt64(addresses[0], 16);
                     ulong end = Convert.ToUInt64(addresses[1], 16);
 
-                    // Only consider regions below 4GB
                     if (start < MAX_32BIT)
-                    {
                         regions.Add((start, Math.Min(end, MAX_32BIT)));
-                    }
                 }
 
-                // Sort regions by start address
                 regions.Sort();
 
-                // Find gaps between regions
-                ulong lastEnd = 0x10000; // Start searching from a reasonable base
+                ulong lastEnd = 0x10000;
                 foreach (var (start, end) in regions)
                 {
                     if (start > lastEnd)
@@ -730,13 +776,9 @@ namespace Archipelago.Core.Util.PlatformMemory
                         ulong gapSize = start - lastEnd;
                         if (gapSize >= size)
                         {
-                            // Found a suitable gap
-                            // Align to page boundary (4KB)
-                            ulong alignedAddress = lastEnd + 0xFFF & ~0xFFFul;
+                            ulong alignedAddress = (lastEnd + 0xFFF) & ~0xFFFul;
                             if (alignedAddress + size <= start)
-                            {
                                 return new nint((long)alignedAddress);
-                            }
                         }
                     }
                     lastEnd = end;
@@ -754,18 +796,15 @@ namespace Archipelago.Core.Util.PlatformMemory
 
         public bool CloseHandle(nint handle)
         {
-            // Detach from process if we were attached
             int pid = handle.ToInt32();
             if (_attachedProcesses.ContainsKey(pid) && _attachedProcesses[pid])
-            {
                 return DetachFromProcess(pid);
-            }
             return true;
         }
 
         public int GetPID(string procName)
         {
-            //On linux process names are capped at 16 bytes, so 15 characters + null terminator
+            // On Linux, process names are capped at 15 chars + null terminator
             procName = procName[..Math.Min(15, procName.Length)];
             Process[] processes = Process.GetProcessesByName(procName);
             if (processes.Length < 1)
@@ -775,9 +814,9 @@ namespace Archipelago.Core.Util.PlatformMemory
             }
             return processes[0].Id;
         }
+
         public List<int> GetPIDs(string procName)
         {
-            //On linux process names are capped at 16 bytes, so 15 characters + null terminator
             procName = procName[..Math.Min(15, procName.Length)];
             Process[] processes = Process.GetProcessesByName(procName);
             if (processes.Length < 1)
@@ -832,7 +871,7 @@ namespace Archipelago.Core.Util.PlatformMemory
                 {
                     moduleInfo.lpBaseOfDll = new nint((long)firstStart);
                     moduleInfo.SizeOfImage = (uint)(lastEnd - firstStart);
-                    moduleInfo.EntryPoint = nint.Zero; // Not easily available on Linux
+                    moduleInfo.EntryPoint = nint.Zero;
                 }
             }
             catch (Exception ex)
@@ -864,6 +903,7 @@ namespace Archipelago.Core.Util.PlatformMemory
 
             return nint.Zero;
         }
+
         public nint GetModuleBaseAddress(int pid, string moduleName)
         {
             try
@@ -878,17 +918,14 @@ namespace Archipelago.Core.Util.PlatformMemory
                 var lines = File.ReadAllLines(mapsPath);
                 foreach (var line in lines)
                 {
-                    // Look for lines containing the module name
                     if (line.Contains(moduleName, StringComparison.OrdinalIgnoreCase))
                     {
-                        // Parse the address range (format: "start-end perms offset dev:inode pathname")
                         var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                         if (parts.Length < 1) continue;
 
                         var addresses = parts[0].Split('-');
                         if (addresses.Length != 2) continue;
 
-                        // Return the start address (base address)
                         ulong baseAddress = Convert.ToUInt64(addresses[0], 16);
                         return new nint((long)baseAddress);
                     }
@@ -906,18 +943,17 @@ namespace Archipelago.Core.Util.PlatformMemory
         #endregion
 
         #region Remote Execution
+
         public uint Execute(nint processHandle, nint address, uint timeoutSeconds = 0xFFFFFFFF)
         {
             int pid = processHandle.ToInt32();
 
-            // Remote: Inject call
-            Log.Logger.Debug($"Injecting function call to {address}");
+            Log.Logger.Debug($"Injecting function call to 0x{address:X} in process {pid}");
             if (!AttachToProcess(pid)) return 0;
 
             try
             {
-                user_regs_struct originalRegs;
-                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out originalRegs) == -1)
+                if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out user_regs_struct originalRegs) == -1)
                 {
                     Log.Logger.Error($"Failed to get original registers: {GetLastErrorMessage()}");
                     return 0;
@@ -925,7 +961,6 @@ namespace Archipelago.Core.Util.PlatformMemory
 
                 ulong originalRip = originalRegs.rip;
 
-                // Save original bytes
                 byte[] originalBytes = new byte[callRaxBytes.Length];
                 if (!ReadProcessMemory(processHandle, originalRip, originalBytes, callRaxBytes.Length, out _))
                 {
@@ -933,16 +968,20 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return 0;
                 }
 
-                // Write shellcode for call rax; int3;
+                // Write:  call rax  (ff d0)
+                //         int3      (cc)       ← trap so we know the call returned
                 if (!WriteProcessMemory(processHandle, originalRip, callRaxBytes, callRaxBytes.Length, out _))
                 {
-                    Log.Logger.Error("Failed to write shellcode");
+                    Log.Logger.Error("Failed to write call+int3 shellcode");
                     return 0;
                 }
 
-                // Set up registers for function call
                 user_regs_struct regs = originalRegs;
-                regs.rax = (ulong)address.ToInt64();
+                regs.rax = (ulong)address.ToInt64(); // function to call
+
+                ulong alignedRsp = (originalRegs.rsp - 128UL) & ~0xFUL;
+                regs.rsp = alignedRsp - 8UL; // (alignedRsp - 8) % 16 == 8 ✓
+
                 regs.rip = originalRip;
                 regs.eflags = 0;
 
@@ -952,39 +991,51 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return 0;
                 }
 
-                // Continue and wait for int3 trap
                 if (ptrace(PTRACE_CONT, pid, nint.Zero, nint.Zero) == -1)
                 {
                     Log.Logger.Error($"Failed to continue process: {GetLastErrorMessage()}");
                     return 0;
                 }
 
-                WaitForInt3(pid);
+                bool hitBreakpoint = WaitForInt3(pid);
 
-                // Restore original bytes
+                // Capture the return value from rax before restoring anything
+                uint returnValue = 0;
+                if (hitBreakpoint)
+                {
+                    if (ptrace_getregs(PTRACE_GETREGS, pid, nint.Zero, out user_regs_struct postCallRegs) == 0)
+                    {
+                        returnValue = (uint)(postCallRegs.rax & 0xFFFFFFFF);
+                        Log.Logger.Debug($"Remote call returned rax=0x{postCallRegs.rax:X}");
+                    }
+                    else
+                    {
+                        Log.Logger.Warning($"Could not read post-call registers: {GetLastErrorMessage()}");
+                    }
+                }
+
                 if (!WriteProcessMemory(processHandle, originalRip, originalBytes, callRaxBytes.Length, out _))
+                    Log.Logger.Error("Failed to restore original bytes after Execute");
+
+                if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref originalRegs) == -1)
+                    Log.Logger.Error($"Failed to restore registers after Execute: {GetLastErrorMessage()}");
+
+                if (!hitBreakpoint)
                 {
-                    Log.Logger.Error("Failed to restore original bytes");
+                    Log.Logger.Error("Execute failed: remote function did not return cleanly");
                     return 0;
                 }
 
-                // Restore original registers (execute interrupted instr)
-                if (ptrace_setregs(PTRACE_SETREGS, pid, nint.Zero, ref originalRegs) == -1)
-                {
-                    Log.Logger.Error($"Failed to restore registers: {GetLastErrorMessage()}");
-                    return 0;
-                }
-                
-                return 1;
+                return returnValue;
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Allocation failed: {ex.Message}");
+                Log.Logger.Error($"Execute failed with exception: {ex.Message}");
                 return 0;
             }
             finally
             {
-                DetachFromProcess(processHandle.ToInt32());
+                DetachFromProcess(pid);
             }
         }
 
@@ -993,33 +1044,29 @@ namespace Archipelago.Core.Util.PlatformMemory
             nint address = VirtualAllocEx(processHandle, nint.Zero, bytes.Length, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
             if (address == nint.Zero)
             {
-                Log.Logger.Error($"Failed to allocate memory: {GetLastErrorMessage()}");
+                Log.Logger.Error($"Failed to allocate memory for ExecuteCommand: {GetLastErrorMessage()}");
                 return 0;
             }
+
             try
             {
-                if (!WriteProcessMemory(processHandle, (ulong)address, bytes, bytes.Length, out nint bytesWritten))
+                if (!WriteProcessMemory(processHandle, (ulong)address, bytes, bytes.Length, out _))
                 {
-                    Log.Logger.Error($"Failed to write bytes to memory: {GetLastErrorMessage()}");
+                    Log.Logger.Error($"Failed to write command bytes to memory: {GetLastErrorMessage()}");
                     return 0;
                 }
 
-                // Execute the code
-                uint result = Execute(processHandle, address, timeoutSeconds);
-                
-                return result;
+                return Execute(processHandle, address, timeoutSeconds);
             }
             catch (Exception ex)
             {
-                Log.Logger.Error($"Error executing command: {ex.Message}");
+                Log.Logger.Error($"ExecuteCommand failed: {ex.Message}");
                 return 0;
             }
             finally
             {
-                if (!VirtualFreeEx(processHandle, address, nint.Zero, MEM_RELEASE))
-                {
-                    Log.Logger.Warning($"Failed to free memory: {GetLastErrorMessage()}");
-                }
+                if (!VirtualFreeEx(processHandle, address, new nint(bytes.Length), MEM_RELEASE))
+                    Log.Logger.Warning($"Failed to free command memory: {GetLastErrorMessage()}");
             }
         }
         #endregion
@@ -1040,9 +1087,7 @@ namespace Archipelago.Core.Util.PlatformMemory
             {
                 nint symbol = dlsym(handle, symbolName);
                 if (symbol == nint.Zero)
-                {
                     Log.Logger.Error($"Failed to find symbol {symbolName} in {libraryPath}");
-                }
                 return symbol;
             }
             finally
@@ -1055,20 +1100,15 @@ namespace Archipelago.Core.Util.PlatformMemory
         {
             int length = 0;
             while (offset + length < buffer.Length && buffer[offset + length] != 0)
-            {
                 length++;
-            }
-            return System.Text.Encoding.UTF8.GetString(buffer, offset, length);
+            return Encoding.UTF8.GetString(buffer, offset, length);
         }
         #endregion
 
-        #region export info
+        #region Export Info
         public nint GetExportAddress(int pid, nint moduleBase, string exportName)
         {
-            // Linux implementation requires parsing ELF headers
-            // This is a complex operation that would need full ELF parsing
-
-            nint processHandle = OpenProcess(0x0010 | 0x0008, false, pid); // VM_READ | VM_OPERATION
+            nint processHandle = OpenProcess(0x0010 | 0x0008, false, pid);
             if (processHandle == nint.Zero)
             {
                 Log.Logger.Error($"Failed to open process {pid}");
@@ -1089,73 +1129,58 @@ namespace Archipelago.Core.Util.PlatformMemory
         {
             try
             {
-                // Read ELF header
-                byte[] elfHeader = new byte[64]; // ELF64 header size
-                if (!ReadProcessMemory(processHandle, (ulong)moduleBase, elfHeader, elfHeader.Length, out nint bytesRead))
+                // Read ELF64 header (64 bytes)
+                byte[] elfHeader = new byte[64];
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase, elfHeader, elfHeader.Length, out _))
                 {
                     Log.Logger.Warning("Failed to read ELF header");
                     return nint.Zero;
                 }
 
-                // Check ELF magic number
                 if (elfHeader[0] != 0x7F || elfHeader[1] != 'E' || elfHeader[2] != 'L' || elfHeader[3] != 'F')
                 {
                     Log.Logger.Warning("Invalid ELF magic number");
                     return nint.Zero;
                 }
 
-                // Determine if 32-bit or 64-bit
                 bool is64Bit = elfHeader[4] == 2;
                 if (!is64Bit)
                 {
-                    Log.Logger.Warning("32-bit ELF not fully supported");
+                    Log.Logger.Warning("32-bit ELF not supported");
                     return nint.Zero;
                 }
 
-                // Read section header offset and count
-                ulong shoff = BitConverter.ToUInt64(elfHeader, 40);    // e_shoff (section header table offset)
-                ushort shentsize = BitConverter.ToUInt16(elfHeader, 58); // e_shentsize (section header entry size)
-                ushort shnum = BitConverter.ToUInt16(elfHeader, 60);   // e_shnum (number of section headers)
-                ushort shstrndx = BitConverter.ToUInt16(elfHeader, 62); // e_shstrndx (section name string table index)
+                ulong shoff = BitConverter.ToUInt64(elfHeader, 40);
+                ushort shentsize = BitConverter.ToUInt16(elfHeader, 58);
+                ushort shnum = BitConverter.ToUInt16(elfHeader, 60);
+                ushort shstrndx = BitConverter.ToUInt16(elfHeader, 62);
 
-                // Read section headers
                 byte[] sectionHeaders = new byte[shentsize * shnum];
-                if (!ReadProcessMemory(processHandle, (ulong)moduleBase + shoff, sectionHeaders, sectionHeaders.Length, out bytesRead))
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase + shoff, sectionHeaders, sectionHeaders.Length, out _))
                 {
                     Log.Logger.Warning("Failed to read section headers");
                     return nint.Zero;
                 }
 
-                // Find .dynsym and .dynstr sections
-                ulong dynsymOffset = 0;
-                ulong dynsymSize = 0;
-                ulong dynstrOffset = 0;
-                ulong dynstrSize = 0;
+                ulong dynsymOffset = 0, dynsymSize = 0;
+                ulong dynstrOffset = 0, dynstrSize = 0;
 
                 for (int i = 0; i < shnum; i++)
                 {
                     int offset = i * shentsize;
+                    uint sh_type = BitConverter.ToUInt32(sectionHeaders, offset + 4);
+                    ulong sh_offset = BitConverter.ToUInt64(sectionHeaders, offset + 24);
+                    ulong sh_size = BitConverter.ToUInt64(sectionHeaders, offset + 32);
 
-                    uint sh_name = BitConverter.ToUInt32(sectionHeaders, offset);      // Section name (string table index)
-                    uint sh_type = BitConverter.ToUInt32(sectionHeaders, offset + 4);   // Section type
-                    ulong sh_offset = BitConverter.ToUInt64(sectionHeaders, offset + 24); // Section file offset
-                    ulong sh_size = BitConverter.ToUInt64(sectionHeaders, offset + 32);   // Section size
-
-                    // SHT_DYNSYM = 11, SHT_STRTAB = 3
-                    if (sh_type == 11) // .dynsym
+                    if (sh_type == 11) // SHT_DYNSYM
                     {
                         dynsymOffset = sh_offset;
                         dynsymSize = sh_size;
                     }
-                    else if (sh_type == 3 && i != shstrndx) // .dynstr (but not .shstrtab)
+                    else if (sh_type == 3 && i != shstrndx && dynstrOffset == 0) // SHT_STRTAB (first non-shstrtab)
                     {
-                        // We need to verify this is actually .dynstr, not .strtab
-                        // For simplicity, assume the first non-shstrtab string table is .dynstr
-                        if (dynstrOffset == 0)
-                        {
-                            dynstrOffset = sh_offset;
-                            dynstrSize = sh_size;
-                        }
+                        dynstrOffset = sh_offset;
+                        dynstrSize = sh_size;
                     }
                 }
 
@@ -1165,40 +1190,32 @@ namespace Archipelago.Core.Util.PlatformMemory
                     return nint.Zero;
                 }
 
-                // Read .dynstr (string table)
                 byte[] dynstr = new byte[dynstrSize];
-                if (!ReadProcessMemory(processHandle, (ulong)moduleBase + dynstrOffset, dynstr, (int)dynstrSize, out bytesRead))
+                if (!ReadProcessMemory(processHandle, (ulong)moduleBase + dynstrOffset, dynstr, (int)dynstrSize, out _))
                 {
                     Log.Logger.Warning("Failed to read .dynstr");
                     return nint.Zero;
                 }
 
-                // Read and search .dynsym (symbol table)
                 const int SYM_ENTRY_SIZE = 24; // sizeof(Elf64_Sym)
                 int numSymbols = (int)(dynsymSize / SYM_ENTRY_SIZE);
 
                 for (int i = 0; i < numSymbols; i++)
                 {
                     byte[] symEntry = new byte[SYM_ENTRY_SIZE];
-                    if (!ReadProcessMemory(processHandle, (ulong)moduleBase + dynsymOffset + (ulong)(i * SYM_ENTRY_SIZE),
-                        symEntry, SYM_ENTRY_SIZE, out bytesRead))
-                    {
+                    if (!ReadProcessMemory(processHandle,
+                            (ulong)moduleBase + dynsymOffset + (ulong)(i * SYM_ENTRY_SIZE),
+                            symEntry, SYM_ENTRY_SIZE, out _))
                         continue;
-                    }
 
-                    uint st_name = BitConverter.ToUInt32(symEntry, 0);      // Symbol name (string table index)
-                    ulong st_value = BitConverter.ToUInt64(symEntry, 8);    // Symbol value/address
+                    uint st_name = BitConverter.ToUInt32(symEntry, 0);
+                    ulong st_value = BitConverter.ToUInt64(symEntry, 8);
 
-                    // Get symbol name from string table
                     if (st_name >= dynstrSize) continue;
 
                     string symbolName = GetNullTerminatedString(dynstr, (int)st_name);
-
                     if (symbolName == exportName)
-                    {
-                        // Found the symbol
                         return (nint)((ulong)moduleBase + st_value);
-                    }
                 }
 
                 Log.Logger.Warning($"Export '{exportName}' not found in ELF symbol table");
@@ -1210,7 +1227,6 @@ namespace Archipelago.Core.Util.PlatformMemory
                 return nint.Zero;
             }
         }
-
         #endregion
     }
 }
