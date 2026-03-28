@@ -43,6 +43,7 @@ namespace Archipelago.Core.Util
         public const uint PROCESS_VM_READ = 0x0010;
         public const uint PROCESS_VM_WRITE = 0x0020;
         public const uint PROCESS_VM_OPERATION = 0x0008;
+        public const uint PROCESS_CREATE_THREAD = 0x0002;
         public const uint PROCESS_SUSPEND_RESUME = 0x0800;
 
         public const uint PAGE_READONLY = 0x02;
@@ -77,7 +78,7 @@ namespace Archipelago.Core.Util
         internal static IntPtr GetProcessH(int proc)
         {
             if (proc == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.OpenProcess(PROCESS_VM_OPERATION | PROCESS_SUSPEND_RESUME | PROCESS_VM_READ | PROCESS_VM_WRITE, false, proc);
+            return PlatformImpl.OpenProcess(PROCESS_VM_OPERATION | PROCESS_SUSPEND_RESUME | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, false, proc);
         }
 
         public static int GetProcessID(string procName)
