@@ -222,7 +222,7 @@ namespace Archipelago.Core
             IsConnected = false;
             IsLoggedIn = false;
             Disconnected?.Invoke(this, new ConnectionChangedEventArgs(false));
-            Memory.CurrentProcId = 0;
+            //Memory.CurrentProcId = 0; // comment out for now
             Log.Information($"Disconnected");
         }
 
