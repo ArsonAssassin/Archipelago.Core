@@ -66,7 +66,7 @@ namespace Archipelago.Core.Util.Overlay
         private void StartWindowMonitoring()
         {
             _windowMonitorTimer = new System.Timers.Timer(100); // Check every 100ms
-            _windowMonitorTimer.Elapsed += (o, e)=> UpdateOverlayPositionAndZOrder();
+            _windowMonitorTimer.Elapsed += (o, e) => UpdateOverlayPositionAndZOrder();
             _windowMonitorTimer.Start();
         }
 
@@ -104,7 +104,7 @@ namespace Archipelago.Core.Util.Overlay
                 SetWindowPos(handle, _targetWindowHandle,
                     rect.Left, rect.Top,
                     rect.Right - rect.Left, rect.Bottom - rect.Top,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW);
             }
         }
 
@@ -231,7 +231,7 @@ namespace Archipelago.Core.Util.Overlay
                 foreach (var popup in activePopups)
                 {
                     ImGui.SetCursorPos(new Vector2(0, yOffset));
-                     if (popup is RichTextPopup richPopup)
+                    if (popup is RichTextPopup richPopup)
                     {
                         RenderRichTextPopup(richPopup, now);
                     }
@@ -239,7 +239,7 @@ namespace Archipelago.Core.Util.Overlay
                     yOffset += _fontSize + 5; // Increased spacing slightly
                 }
             }
-            
+
             ImGui.End();
         }
         private void RenderRichTextPopup(RichTextPopup popup, DateTime now)
