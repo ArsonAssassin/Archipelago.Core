@@ -12,6 +12,8 @@ namespace Archipelago.Core.Util.Overlay
         bool AttachToWindow(IntPtr targetWindowHandle);
         void AddTextPopup(string text);
         void AddRichTextPopup(List<ColoredTextSpan> spans);
-
+        void SetPosition(float x, float y);
+        void SetSize(float width, float height);
+        void SetSizeAndPosition(float x, float y, float width, float height);
     }
 }
