@@ -37,6 +37,7 @@ namespace Archipelago.Core.Util.Overlay
         private int _windowWidth;
         private int _windowHeight;
 
+        private readonly Dictionary<int, ImFontPtr> _loadedFonts = new();
         public ImGuiController(GL gl, IView view, IInputContext input)
         {
             _gl = gl;
@@ -306,7 +307,47 @@ namespace Archipelago.Core.Util.Overlay
             _gl.Disable(EnableCap.Blend);
             _gl.Disable(EnableCap.ScissorTest);
         }
+        public void RebuildFontAtlas()
+        {
+            if (_fontTexture != 0)
+            {
+                _gl.DeleteTexture(_fontTexture);
+                _fontTexture = 0;
+            }
+            RecreateFontDeviceTexture();
+        }
 
+        public bool TryGetFont(int key, out ImFontPtr font)
+            => _loadedFonts.TryGetValue(key, out font);
+        public static int ComputeHash(byte[] data)
+        {
+            var hash = new HashCode();
+            hash.AddBytes(data);
+            return hash.ToHashCode();
+        }
+        public ImFontPtr LoadFont(byte[] ttfData, float sizePixels = 14f)
+        {
+            var key = ComputeHash(ttfData);
+            if (_loadedFonts.TryGetValue(key, out var existing))
+                return existing;
+
+            var io = ImGui.GetIO();
+            ImFontPtr font;
+
+            unsafe
+            {
+                fixed (byte* ptr = ttfData)
+                {
+                    // ImGui copies the data internally so the pin only needs to
+                    // last for the duration of this call
+                    font = io.Fonts.AddFontFromMemoryTTF(
+                        (IntPtr)ptr, ttfData.Length, sizePixels);
+                }
+            }
+
+            _loadedFonts[key] = font;
+            return font;
+        }
         public void WindowResized(int width, int height)
         {
             _windowWidth = width;

@@ -26,7 +26,9 @@ namespace Archipelago.Core.Util.Overlay
     {
         public string Text { get; set; }
         public IColor Color { get; set; }
-
+        public byte[]? FontBytes { get; set; }
+        public string? FontResourcePath { get; set; }
+        internal int? ResolvedFontKey { get; set; }
         internal Vector4 ToVector4()
         {
             return new Vector4(

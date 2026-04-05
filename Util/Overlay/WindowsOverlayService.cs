@@ -35,6 +35,9 @@ namespace Archipelago.Core.Util.Overlay
         private float _fadeDuration = 10.0f;
 
         private System.Timers.Timer? _windowMonitorTimer;
+        private readonly Dictionary<int, ImFontPtr> _fontCache = new();
+        private readonly ConcurrentQueue<(int Key, byte[] Data)> _pendingFonts = new();
+        private volatile bool _fontAtlasDirty = false;
         public WindowsOverlayService(OverlayOptions options = null)
         {
             if (options != null)
@@ -47,7 +50,22 @@ namespace Archipelago.Core.Util.Overlay
             }
 
         }
+        public void SetPosition(float x, float y)
+        {
+            _xOffset = x;
+            _yOffset = y;
+        }
 
+        public void SetSize(float width, float height)
+        {
+            if (_window == null) return;
+            _window.Size = new Vector2D<int>((int)width, (int)height);
+        }
+        public void SetSizeAndPosition(float x, float y, float width, float height)
+        {
+            SetSize(width, height);
+            SetPosition(x, y);
+        }
         public bool AttachToWindow(IntPtr targetWindowHandle)
         {
             if (_isRunning) return false;
@@ -66,7 +84,7 @@ namespace Archipelago.Core.Util.Overlay
         private void StartWindowMonitoring()
         {
             _windowMonitorTimer = new System.Timers.Timer(100); // Check every 100ms
-            _windowMonitorTimer.Elapsed += (o, e)=> UpdateOverlayPositionAndZOrder();
+            _windowMonitorTimer.Elapsed += (o, e) => UpdateOverlayPositionAndZOrder();
             _windowMonitorTimer.Start();
         }
 
@@ -104,7 +122,7 @@ namespace Archipelago.Core.Util.Overlay
                 SetWindowPos(handle, _targetWindowHandle,
                     rect.Left, rect.Top,
                     rect.Right - rect.Left, rect.Bottom - rect.Top,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW);
             }
         }
 
@@ -189,6 +207,23 @@ namespace Archipelago.Core.Util.Overlay
         {
             if (_isDisposed || _imguiController == null || _gl == null)
                 return;
+
+            while (_pendingFonts.TryDequeue(out var pending))
+            {
+                if (!_fontCache.ContainsKey(pending.Key))
+                {
+                    var font = _imguiController.LoadFont(pending.Data, _fontSize);
+                    _fontCache[pending.Key] = font;
+                    _fontAtlasDirty = true;
+                }
+            }
+
+            if (_fontAtlasDirty)
+            {
+                _imguiController.RebuildFontAtlas();
+                _fontAtlasDirty = false;
+            }
+
             _gl.ClearColor(0f, 0f, 0f, 0f);
             _gl.Clear(ClearBufferMask.ColorBufferBit);
 
@@ -198,7 +233,26 @@ namespace Archipelago.Core.Util.Overlay
 
             _imguiController.Render();
         }
+        private byte[]? ResolveFontBytes(ColoredTextSpan span)
+        {
+            if (span.FontBytes != null)
+                return span.FontBytes;
 
+            if (!string.IsNullOrEmpty(span.FontResourcePath))
+            {
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    using var stream = assembly.GetManifestResourceStream(span.FontResourcePath);
+                    if (stream == null) continue;
+
+                    var bytes = new byte[stream.Length];
+                    stream.ReadExactly(bytes);
+                    return bytes;
+                }
+            }
+
+            return null;
+        }
         private void RenderOverlay()
         {
             var now = DateTime.Now;
@@ -231,7 +285,7 @@ namespace Archipelago.Core.Util.Overlay
                 foreach (var popup in activePopups)
                 {
                     ImGui.SetCursorPos(new Vector2(0, yOffset));
-                     if (popup is RichTextPopup richPopup)
+                    if (popup is RichTextPopup richPopup)
                     {
                         RenderRichTextPopup(richPopup, now);
                     }
@@ -239,17 +293,29 @@ namespace Archipelago.Core.Util.Overlay
                     yOffset += _fontSize + 5; // Increased spacing slightly
                 }
             }
-            
+
             ImGui.End();
         }
         private void RenderRichTextPopup(RichTextPopup popup, DateTime now)
         {
             var opacity = CalculateOpacity(popup.ExpireTime, popup.Duration, now);
 
-            bool first = true;
+            int? previousFontKey = null;
+
             foreach (var span in popup.Spans)
             {
-                if (!first)
+                var spanFontKey = span.ResolvedFontKey;
+                bool fontChanged = spanFontKey != previousFontKey;
+
+                if (fontChanged)
+                {
+                    if (previousFontKey.HasValue)
+                        ImGui.PopFont();
+
+                    if (spanFontKey.HasValue && _fontCache.TryGetValue(spanFontKey.Value, out var font))
+                        ImGui.PushFont(font);
+                }
+                if (span != popup.Spans[0])
                 {
                     ImGui.SameLine(0, 0);
                 }
@@ -261,8 +327,10 @@ namespace Archipelago.Core.Util.Overlay
                 ImGui.Text(span.Text);
                 ImGui.PopStyleColor();
 
-                first = false;
+                previousFontKey = spanFontKey;
             }
+            if (previousFontKey.HasValue)
+                ImGui.PopFont();
         }
 
         private float CalculateOpacity(DateTime expireTime, float duration, DateTime now)
@@ -306,7 +374,19 @@ namespace Archipelago.Core.Util.Overlay
         public void AddRichTextPopup(List<ColoredTextSpan> spans)
         {
             if (_isDisposed) return;
+            foreach (var span in spans)
+            {
+                var bytes = ResolveFontBytes(span);
+                if (bytes == null) continue;
 
+
+
+                var key = ImGuiController.ComputeHash(bytes);
+                span.ResolvedFontKey = key;
+
+                if (!_fontCache.ContainsKey(key))
+                    _pendingFonts.Enqueue((key, bytes));
+            }
             var id = Guid.NewGuid();
             var popup = new RichTextPopup
             {
