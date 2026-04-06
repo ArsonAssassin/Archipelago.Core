@@ -164,10 +164,19 @@ namespace Archipelago.Core.Util.Overlay
             // Make window completely non-interactive BEFORE showing it
             MakeWindowTransparent();
 
-            // Small delay to ensure styles are applied
+            // Small delay to ensure styles are applied, then re-assert DWM compositing.
+            // GLFW calls DwmExtendFrameIntoClientArea during window creation, but DWM
+            // can lose that state. Re-asserting after the window is visible forces DWM
+            // to composite our framebuffer alpha correctly.
             Task.Delay(100).ContinueWith(_ =>
             {
                 _window.IsVisible = true;
+                var handle = _window?.Native?.Win32?.Hwnd ?? IntPtr.Zero;
+                if (handle != IntPtr.Zero)
+                {
+                    var margins = new MARGINS { cxLeftWidth = -1, cxRightWidth = -1, cyTopHeight = -1, cyBottomHeight = -1 };
+                    DwmExtendFrameIntoClientArea(handle, ref margins);
+                }
             });
         }
 
@@ -428,6 +437,15 @@ namespace Archipelago.Core.Util.Overlay
         }
 
         #region Windows P/Invoke for transparency
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS pMarInset);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MARGINS
+        {
+            public int cxLeftWidth, cxRightWidth, cyTopHeight, cyBottomHeight;
+        }
+
         [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
         private static extern uint GetWindowLong(IntPtr hWnd, int nIndex);
 

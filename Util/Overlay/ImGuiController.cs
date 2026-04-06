@@ -227,7 +227,12 @@ namespace Archipelago.Core.Util.Overlay
             // Setup render state
             _gl.Enable(EnableCap.Blend);
             _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
-            _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+            // Use separate blend functions so the alpha channel accumulates correctly
+            // for DWM per-pixel alpha compositing. Without this, alpha gets multiplied
+            // by itself (SrcAlpha * SrcAlpha) producing a non-transparent framebuffer.
+            _gl.BlendFuncSeparate(
+                BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha,
+                BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
             _gl.Disable(EnableCap.CullFace);
             _gl.Disable(EnableCap.DepthTest);
             _gl.Enable(EnableCap.ScissorTest);
