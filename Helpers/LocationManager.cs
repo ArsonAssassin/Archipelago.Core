@@ -16,6 +16,7 @@ namespace Archipelago.Core.Helpers
         public event EventHandler<LocationCompletedEventArgs>? LocationCompleted;
         public Func<bool>? EnableLocationsCondition;
         private CancellationTokenSource _monitorToken { get; set; } = new CancellationTokenSource();
+        private readonly object _monitoredLocationsLock = new object();
         private List<ILocation> _monitoredLocations { get; set; } = new List<ILocation>();
 
         private Channel<ILocation> _locationsChannel;
@@ -28,31 +29,35 @@ namespace Archipelago.Core.Helpers
         }
         public void AddLocation(ILocation location)
         {
-
-            if (!_monitoredLocations.Any(x => x.Id == location.Id))
+            bool added = false;
+            lock (_monitoredLocationsLock)
             {
-                _monitoredLocations.Add(location);
-
-                if (_locationsChannel != null)
+                if (!_monitoredLocations.Any(x => x.Id == location.Id))
                 {
-                    _locationsChannel.Writer.TryWrite(location);
+                    _monitoredLocations.Add(location);
+                    added = true;
                 }
             }
-
+            if (added && _locationsChannel != null)
+            {
+                _locationsChannel.Writer.TryWrite(location);
+            }
         }
         public void RemoveLocation(ILocation location)
         {
-            var confirmedLocation = _monitoredLocations.SingleOrDefault(x => x.Id == location.Id);
-            if (confirmedLocation != null)
+            lock (_monitoredLocationsLock)
             {
-                Log.Verbose($"Location {location.Id} - {location.Name} removed from tracking");
-                _monitoredLocations.Remove(confirmedLocation);
+                var confirmedLocation = _monitoredLocations.SingleOrDefault(x => x.Id == location.Id);
+                if (confirmedLocation != null)
+                {
+                    Log.Verbose($"Location {location.Id} - {location.Name} removed from tracking");
+                    _monitoredLocations.Remove(confirmedLocation);
+                }
+                else
+                {
+                    Log.Warning($"Could not remove location {location.Id} - {location.Name} because it was not found in the list, or was found multiple times.");
+                }
             }
-            else
-            {
-                Log.Warning($"Could not remove location {location.Id} - {location.Name} because it was not found in the list, or was found multiple times.");
-            }
-
         }
         public async Task MonitorLocationsAsync(ArchipelagoSession currentSession, List<ILocation> locations, CancellationToken cancellationToken = default)
         {
@@ -64,7 +69,10 @@ namespace Archipelago.Core.Helpers
                 AllowSynchronousContinuations = false
             });
 
-            _monitoredLocations = locations;    
+            lock (_monitoredLocationsLock)
+            {
+                _monitoredLocations = locations;
+            }
 
             foreach (var location in locations)
             {
@@ -191,7 +199,11 @@ namespace Archipelago.Core.Helpers
                 _locationsChannel?.Writer.Complete();
                 if (_workerTasks.Any())
                 {
-                    Task.WaitAll(_workerTasks.ToArray(), TimeSpan.FromSeconds(5));
+                    bool allFinished = Task.WaitAll(_workerTasks.ToArray(), TimeSpan.FromSeconds(5));
+                    if (!allFinished)
+                    {
+                        Log.Warning("Location monitor workers did not stop within the timeout period.");
+                    }
                 }
                 _monitorToken?.Dispose();
             }

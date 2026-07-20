@@ -40,11 +40,14 @@ namespace Archipelago.Core.Helpers
             if (_gameStateManager == null)
             {
                 Log.Error("GameStateManager is null. Cannot receive items.");
+                return;
             }
             cancellationToken = Helpers.CombineTokens(cancellationToken);
-            await _receiveItemSemaphore.WaitAsync(cancellationToken);
+            bool acquired = false;
             try
             {
+                await _receiveItemSemaphore.WaitAsync(cancellationToken);
+                acquired = true;
                 if (!isReadyToReceiveItems) /* in case it was set false while waiting */
                 {
                     return;
@@ -126,7 +129,7 @@ namespace Archipelago.Core.Helpers
             }
             finally
             {
-                _receiveItemSemaphore.Release();
+                if (acquired) _receiveItemSemaphore.Release();
             }
         }
         public async Task ForceReloadAllItems(CancellationToken cancellationToken = default)

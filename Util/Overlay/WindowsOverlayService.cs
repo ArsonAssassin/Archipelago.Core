@@ -1,4 +1,5 @@
 ﻿using ImGuiNET;
+using Serilog;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
@@ -72,11 +73,8 @@ namespace Archipelago.Core.Util.Overlay
 
             _targetWindowHandle = targetWindowHandle;
 
-
-            StartWindowMonitoring();
-
-
-            // Start overlay on background thread
+            // Timer is started from OnLoad after the window and GL context are ready.
+            // Start overlay on background thread.
             Task.Run(() => InitializeAndRun());
 
             return true;
@@ -94,31 +92,28 @@ namespace Archipelago.Core.Util.Overlay
             if (_targetWindowHandle == IntPtr.Zero || _window?.Native?.Win32 == null)
                 return;
 
+            var handle = _window.Native!.Win32!.Value.Hwnd;
+
+            // Hide overlay if the target window no longer exists or is not visible
+            if (!IsWindow(_targetWindowHandle) || !IsWindowVisible(_targetWindowHandle))
+            {
+                SetWindowPos(handle, IntPtr.Zero, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+                return;
+            }
+
+            // Hide overlay if the target window is minimized
+            var placement = new WINDOWPLACEMENT { length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+            if (GetWindowPlacement(_targetWindowHandle, ref placement) && placement.showCmd == SW_SHOWMINIMIZED)
+            {
+                SetWindowPos(handle, IntPtr.Zero, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+                return;
+            }
+
+            // Position overlay to match target window (no style changes needed)
             if (GetWindowRect(_targetWindowHandle, out RECT rect))
             {
-                var handle = _window.Native!.Win32!.Value.Hwnd;
-
-                // First ensure transparency is maintained
-                const int GWL_EXSTYLE = -20;
-                const int GWL_STYLE = -16;
-                const uint WS_EX_LAYERED = 0x80000;
-                const uint WS_EX_TRANSPARENT = 0x20;
-                const uint WS_EX_NOACTIVATE = 0x08000000;
-                const uint WS_EX_TOOLWINDOW = 0x00000080;
-                const uint WS_POPUP = 0x80000000;
-                const uint WS_VISIBLE = 0x10000000;
-
-                const int GWLP_HWNDPARENT = -8;
-
-                SetWindowLongPtr(handle, GWLP_HWNDPARENT, _targetWindowHandle);
-                SetWindowLong(handle, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-
-                var extendedStyle = GetWindowLong(handle, GWL_EXSTYLE);
-                SetWindowLong(handle, GWL_EXSTYLE,
-                    extendedStyle | WS_EX_LAYERED | WS_EX_TRANSPARENT |
-                    WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
-
-                // Now position overlay directly above target window in z-order
                 SetWindowPos(handle, _targetWindowHandle,
                     rect.Left, rect.Top,
                     rect.Right - rect.Left, rect.Bottom - rect.Top,
@@ -129,12 +124,22 @@ namespace Archipelago.Core.Util.Overlay
 
         private void InitializeAndRun()
         {
+            // Get target window dimensions so the overlay starts at the right size
+            var initialSize = new Vector2D<int>(800, 600);
+            if (_targetWindowHandle != IntPtr.Zero && GetWindowRect(_targetWindowHandle, out RECT targetRect))
+            {
+                int w = targetRect.Right - targetRect.Left;
+                int h = targetRect.Bottom - targetRect.Top;
+                if (w > 0 && h > 0)
+                    initialSize = new Vector2D<int>(w, h);
+            }
+
             var options = WindowOptions.Default;
-            options.Size = new Vector2D<int>(800, 600);
+            options.Size = initialSize;
             options.Title = "Overlay";
             options.WindowBorder = WindowBorder.Hidden;
             options.TransparentFramebuffer = true;
-            options.IsVisible = false; // Start invisible, show after setup
+            options.IsVisible = false; // Start invisible, shown after transparency setup in OnLoad
             options.TopMost = true;
             options.WindowState = WindowState.Normal;
             options.ShouldSwapAutomatically = true;
@@ -161,14 +166,16 @@ namespace Archipelago.Core.Util.Overlay
             var io = ImGui.GetIO();
             io.ConfigFlags |= ImGuiConfigFlags.NoMouseCursorChange | ImGuiConfigFlags.NoMouse | ImGuiConfigFlags.NoKeyboard | ImGuiConfigFlags.None;
 
-            // Make window completely non-interactive BEFORE showing it
+            // Make window completely non-interactive BEFORE showing it.
+            // This sets styles and positions the overlay over the target window.
             MakeWindowTransparent();
 
-            // Small delay to ensure styles are applied
-            Task.Delay(100).ContinueWith(_ =>
-            {
-                _window.IsVisible = true;
-            });
+            // Show the window now that transparency is configured.
+            // OnLoad runs on the Silk.NET rendering thread so this is thread-safe.
+            _window.IsVisible = true;
+
+            // Start the position-tracking timer now that the window is fully initialized.
+            StartWindowMonitoring();
         }
 
         private void MakeWindowTransparent()
@@ -177,31 +184,53 @@ namespace Archipelago.Core.Util.Overlay
             {
                 const int GWL_EXSTYLE = -20;
                 const int GWL_STYLE = -16;
-                const uint WS_EX_LAYERED = 0x80000;
                 const uint WS_EX_TRANSPARENT = 0x20;
                 const uint WS_EX_NOACTIVATE = 0x08000000;
                 const uint WS_EX_TOOLWINDOW = 0x00000080;
-                const uint WS_EX_TOPMOST = 0x00000008;
                 const uint WS_POPUP = 0x80000000;
-                const uint WS_VISIBLE = 0x10000000;
-                const uint WS_DISABLED = 0x08000000;
-
 
                 var handle = _window!.Native!.Win32!.Value.Hwnd;
 
-                SetWindowLong(handle, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+                // Strip overlapped-window chrome bits but preserve GLFW-set bits
+                // (e.g. WS_CLIPSIBLINGS, WS_CLIPCHILDREN needed for DWM transparency)
+                var style = GetWindowLong(handle, GWL_STYLE);
+                style &= ~(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+                style |= WS_POPUP;
+                SetWindowLong(handle, GWL_STYLE, style);
 
-                // Set extended styles
+                // Add click-through and taskbar-hidden flags.
+                // Do NOT add WS_EX_LAYERED - it conflicts with DWM-based transparent framebuffer.
                 var extendedStyle = GetWindowLong(handle, GWL_EXSTYLE);
-                SetWindowLong(handle, GWL_EXSTYLE,
-                    extendedStyle | WS_EX_LAYERED | WS_EX_TRANSPARENT |
-                    WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST);
+                extendedStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+                SetWindowLong(handle, GWL_EXSTYLE, extendedStyle);
 
-                // Position overlay above target window (not globally topmost)
-                SetWindowPos(handle, _targetWindowHandle, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                // Tell DWM to composite the entire client area with alpha.
+                // This is the documented way to get per-pixel OpenGL transparency on Windows.
+                var margins = new MARGINS { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+                DwmExtendFrameIntoClientArea(handle, ref margins);
+
+                // Set parent and z-order relative to target window
+                const int GWLP_HWNDPARENT = -8;
+                SetWindowLongPtr(handle, GWLP_HWNDPARENT, _targetWindowHandle);
+
+                // Position overlay to match target window
+                if (GetWindowRect(_targetWindowHandle, out RECT rect))
+                {
+                    SetWindowPos(handle, _targetWindowHandle,
+                        rect.Left, rect.Top,
+                        rect.Right - rect.Left, rect.Bottom - rect.Top,
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                }
+                else
+                {
+                    SetWindowPos(handle, _targetWindowHandle, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                }
             }
-            catch { /* Ignore if P/Invoke fails */ }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to apply overlay transparency styles");
+            }
         }
         private void OnRender(double deltaTime)
         {
@@ -402,14 +431,21 @@ namespace Archipelago.Core.Util.Overlay
 
         private void ScheduleRemoval(Guid id, float duration)
         {
-            Task.Delay(TimeSpan.FromMilliseconds(duration * 1000))
-                .ContinueWith(_ =>
+            _ = Task.Delay(TimeSpan.FromMilliseconds(duration * 1000))
+                .ContinueWith(task =>
                 {
-                    if (!_isDisposed)
+                    try
                     {
-                        _popups.TryRemove(id, out var popup);
+                        if (!_isDisposed)
+                        {
+                            _popups.TryRemove(id, out _);
+                        }
                     }
-                });
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Error removing overlay popup {Id}", id);
+                    }
+                }, TaskScheduler.Default);
         }
 
         public void Dispose()
@@ -487,10 +523,35 @@ namespace Archipelago.Core.Util.Overlay
         }
 
 
+        [DllImport("user32.dll")]
+        private static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS pMarInset);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MARGINS
+        {
+            public int Left;
+            public int Right;
+            public int Top;
+            public int Bottom;
+        }
+
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
+        private const uint SWP_HIDEWINDOW = 0x0080;
+
+        private const int SW_SHOWMINIMIZED = 2;
+
+        // Style bits to strip from the default overlapped window
+        private const uint WS_CAPTION = 0x00C00000;
+        private const uint WS_THICKFRAME = 0x00040000;
+        private const uint WS_SYSMENU = 0x00080000;
+        private const uint WS_MINIMIZEBOX = 0x00020000;
+        private const uint WS_MAXIMIZEBOX = 0x00010000;
         #endregion
     }
 

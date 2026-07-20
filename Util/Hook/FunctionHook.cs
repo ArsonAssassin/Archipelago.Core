@@ -42,15 +42,26 @@ namespace Archipelago.Core.Util.Hook
             // Allocate parameter storage
             _parameterStorage = PlatformMemory.PlatformMemory.Allocate(1024);
 
-            // Create managed callback delegate and get function pointer
-            var nativeCallback = new NativeHookCallback(HandleNativeCallback);
-            _callbackAddress = Marshal.GetFunctionPointerForDelegate(nativeCallback);
+            try
+            {
+                // Create managed callback delegate and get function pointer
+                var nativeCallback = new NativeHookCallback(HandleNativeCallback);
+                _callbackAddress = Marshal.GetFunctionPointerForDelegate(nativeCallback);
 
-            // Create and write the hook stub
-            _hookAddress = CreateHookStub();
+                // Create and write the hook stub
+                _hookAddress = CreateHookStub();
 
-            // Create jump instruction
-            _jumpBytes = CreateJumpInstruction(_targetAddress, _hookAddress);
+                // Create jump instruction
+                _jumpBytes = CreateJumpInstruction(_targetAddress, _hookAddress);
+            }
+            catch
+            {
+                if (_hookAddress != IntPtr.Zero)
+                    PlatformMemory.PlatformMemory.FreeMemory(_hookAddress);
+                if (_parameterStorage != IntPtr.Zero)
+                    PlatformMemory.PlatformMemory.FreeMemory(_parameterStorage);
+                throw;
+            }
         }
         private IntPtr CreateHookStub()
         {

@@ -58,8 +58,8 @@ namespace Archipelago.Core
                 }
             }
         }
-        public bool IsConnected { get; set; }
-        public bool IsLoggedIn { get; set; }
+        public bool IsConnected { get; private set; }
+        public bool IsLoggedIn { get; private set; }
         public event EventHandler<ConnectionChangedEventArgs>? Disconnected;
         public event EventHandler<ConnectionChangedEventArgs>? Connected;
         public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
@@ -194,7 +194,14 @@ namespace Archipelago.Core
         }
         private async void ItemReceivedHandler(ReceivedItemsHelper helper)
         {
-            await ReceiveItems();
+            try
+            {
+                await ReceiveItems();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Unhandled error in ItemReceivedHandler");
+            }
         }
 
         private void Socket_SocketClosed(string reason)
@@ -225,6 +232,7 @@ namespace Archipelago.Core
         }
         private void DisconnectHandlers()
         {
+            if (CurrentSession == null) return;
             CurrentSession.Socket.SocketClosed -= Socket_SocketClosed;
             CurrentSession.MessageLog.OnMessageReceived -= HandleMessageReceived;
             CurrentSession.Items.ItemReceived -= ItemReceivedHandler;
@@ -280,11 +288,15 @@ namespace Archipelago.Core
 
             return;
         }
-        public async void SendMessage(string message, CancellationToken cancellationToken = default)
+        public async Task SendMessage(string message, CancellationToken cancellationToken = default)
         {
+            if (CurrentSession == null)
+            {
+                Log.Warning("Cannot send message: not connected.");
+                return;
+            }
             cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
             await CurrentSession.Socket.SendPacketAsync(new SayPacket() { Text = message }).ConfigureAwait(false);
-
         }
         private void HandleMessageReceived(LogMessage message)
         {

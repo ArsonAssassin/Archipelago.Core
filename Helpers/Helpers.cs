@@ -25,6 +25,14 @@ namespace Archipelago.Core.Helpers
 
             lock (_linkedTokenSources)
             {
+                // Dispose and remove sources whose cancellation has already been requested
+                // to prevent unbounded growth of the list.
+                var stale = _linkedTokenSources.Where(s => s.IsCancellationRequested).ToList();
+                foreach (var src in stale)
+                {
+                    src.Dispose();
+                    _linkedTokenSources.Remove(src);
+                }
                 _linkedTokenSources.Add(linkedSource);
             }
 
