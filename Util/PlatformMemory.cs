@@ -66,7 +66,17 @@ namespace Archipelago.Core.Util.PlatformMemory
         internal static IntPtr GetProcessH(int proc)
         {
             if (proc == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.OpenProcess(PROCESS_VM_OPERATION | PROCESS_SUSPEND_RESUME | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, false, proc);
+            uint flags = PROCESS_VM_OPERATION | PROCESS_SUSPEND_RESUME | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD;
+            var handle = PlatformImpl.OpenProcess(flags, false, proc);
+            if (handle == IntPtr.Zero)
+            {
+                uint error = PlatformImpl.GetLastError();
+                if (error == 5) // ERROR_ACCESS_DENIED
+                    throw new ElevationRequiredException(proc);
+                throw new InvalidOperationException(
+                    $"Failed to open process {proc}: {PlatformImpl.GetLastErrorMessage()}");
+            }
+            return handle;
         }
 
         public static int GetProcessID(string procName)
