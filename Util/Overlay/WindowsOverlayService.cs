@@ -324,7 +324,7 @@ namespace Archipelago.Core.Util.Overlay
                 color.W *= opacity;
 
                 ImGui.PushStyleColor(ImGuiCol.Text, color);
-                ImGui.Text(span.Text);
+                ImGui.TextUnformatted(span.Text);
                 ImGui.PopStyleColor();
 
                 previousFontKey = spanFontKey;
