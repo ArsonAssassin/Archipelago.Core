@@ -17,7 +17,7 @@ namespace Archipelago.Core.Util.Duckstation
         public IntPtr FindEEromAddress()
         {
             // Get the Duckstation process ID
-            int pid = Memory.GetProcessID(DUCKSTATION_MODULE_NAME);
+            int pid = PlatformMemory.PlatformMemory.GetProcessID(DUCKSTATION_MODULE_NAME);
             if (pid == 0)
             {
                 Log.Logger.Warning("Duckstation process not found");
@@ -25,7 +25,7 @@ namespace Archipelago.Core.Util.Duckstation
             }
 
             // Find the Duckstation module base address
-            IntPtr moduleBase = Memory.GetModuleBaseAddress(pid, DUCKSTATION_MODULE_NAME);
+            IntPtr moduleBase = PlatformMemory.PlatformMemory.GetModuleBaseAddress(pid, DUCKSTATION_MODULE_NAME);
             if (moduleBase == IntPtr.Zero)
             {
                 Log.Logger.Warning("Failed to find Duckstation module");
@@ -33,7 +33,7 @@ namespace Archipelago.Core.Util.Duckstation
             }
 
             // Find the RAM export in the module
-            IntPtr ramExportAddress = Memory.GetExportAddress(pid, moduleBase, RAM_EXPORT_NAME);
+            IntPtr ramExportAddress = PlatformMemory.PlatformMemory.GetExportAddress(pid, moduleBase, RAM_EXPORT_NAME);
             if (ramExportAddress == IntPtr.Zero)
             {
                 Log.Logger.Warning("Failed to find RAM export");
@@ -41,8 +41,8 @@ namespace Archipelago.Core.Util.Duckstation
             }
 
             // Open a handle to the process for reading
-            IntPtr processHandle = Memory.PlatformImpl.OpenProcess(
-                Memory.PROCESS_VM_READ | Memory.PROCESS_VM_OPERATION,
+            IntPtr processHandle = PlatformMemory.PlatformMemory.PlatformImpl.OpenProcess(
+                PlatformMemory.PlatformMemory.PROCESS_VM_READ | PlatformMemory.PlatformMemory.PROCESS_VM_OPERATION,
                 false, pid);
 
             if (processHandle == IntPtr.Zero)
@@ -55,7 +55,7 @@ namespace Archipelago.Core.Util.Duckstation
             {
                 // Read the pointer value at the RAM export address
                 byte[] buffer = new byte[IntPtr.Size];
-                if (!Memory.PlatformImpl.ReadProcessMemory(processHandle, (ulong)ramExportAddress,
+                if (!PlatformMemory.PlatformMemory.PlatformImpl.ReadProcessMemory(processHandle, (ulong)ramExportAddress,
                     buffer, buffer.Length, out IntPtr bytesRead))
                 {
                     Log.Logger.Warning("Failed to read RAM pointer value");
@@ -70,7 +70,7 @@ namespace Archipelago.Core.Util.Duckstation
             }
             finally
             {
-                Memory.PlatformImpl.CloseHandle(processHandle);
+                PlatformMemory.PlatformMemory.PlatformImpl.CloseHandle(processHandle);
             }
         }
     }

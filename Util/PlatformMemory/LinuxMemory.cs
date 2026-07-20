@@ -12,7 +12,7 @@ using static Archipelago.Core.Util.Enums;
 
 namespace Archipelago.Core.Util.PlatformMemory
 {
-    public class LinuxMemory : IMemory
+    public class LinuxMemory : IInvocableMemory
     {
         #region Constants
         // ptrace requests

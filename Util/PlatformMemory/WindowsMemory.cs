@@ -11,7 +11,7 @@ using static Archipelago.Core.Util.Enums;
 
 namespace Archipelago.Core.Util.PlatformMemory
 {
-    public class WindowsMemory : IMemory
+    public class WindowsMemory : IInvocableMemory
     {
         #region Constants
         private const uint FORMAT_MESSAGE_ALLOCATE_BUFFER = 0x00000100;

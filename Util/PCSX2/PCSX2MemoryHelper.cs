@@ -17,7 +17,7 @@ namespace Archipelago.Core.Util.PCSX2
         public IntPtr FindEEromAddress()
         {
             // Get the PCSX2 process ID
-            int pid = Memory.GetProcessID(PCSX2_MODULE_NAME);
+            int pid = PlatformMemory.PlatformMemory.GetProcessID(PCSX2_MODULE_NAME);
             if (pid == 0)
             {
                 Log.Logger.Warning("PCSX2 process not found");
@@ -25,7 +25,7 @@ namespace Archipelago.Core.Util.PCSX2
             }
 
             // Find the PCSX2 module base address
-            IntPtr moduleBase = Memory.GetModuleBaseAddress(pid, PCSX2_MODULE_NAME);
+            IntPtr moduleBase = PlatformMemory.PlatformMemory.GetModuleBaseAddress(pid, PCSX2_MODULE_NAME);
             if (moduleBase == IntPtr.Zero)
             {
                 Log.Logger.Warning("Failed to find PCSX2 module");
@@ -33,7 +33,7 @@ namespace Archipelago.Core.Util.PCSX2
             }
 
             // Find the EEmem export in the module
-            IntPtr eememExportAddress = Memory.GetExportAddress(pid, moduleBase, EEMEM_EXPORT_NAME);
+            IntPtr eememExportAddress = PlatformMemory.PlatformMemory.GetExportAddress(pid, moduleBase, EEMEM_EXPORT_NAME);
             if (eememExportAddress == IntPtr.Zero)
             {
                 Log.Logger.Warning("Failed to find EEmem export");
@@ -41,8 +41,8 @@ namespace Archipelago.Core.Util.PCSX2
             }
 
             // Open a handle to the process for reading
-            IntPtr processHandle = Memory.PlatformImpl.OpenProcess(
-                Memory.PROCESS_VM_READ | Memory.PROCESS_VM_OPERATION,
+            IntPtr processHandle = PlatformMemory.PlatformMemory.PlatformImpl.OpenProcess(
+                PlatformMemory.PlatformMemory.PROCESS_VM_READ | PlatformMemory.PlatformMemory.PROCESS_VM_OPERATION,
                 false, pid);
 
             if (processHandle == IntPtr.Zero)
@@ -55,7 +55,7 @@ namespace Archipelago.Core.Util.PCSX2
             {
                 // Read the pointer value at the EEmem export address
                 byte[] buffer = new byte[IntPtr.Size];
-                if (!Memory.PlatformImpl.ReadProcessMemory(processHandle, (ulong)eememExportAddress,
+                if (!PlatformMemory.PlatformMemory.PlatformImpl.ReadProcessMemory(processHandle, (ulong)eememExportAddress,
                     buffer, buffer.Length, out IntPtr bytesRead))
                 {
                     Log.Logger.Warning("Failed to read EEmem pointer value");
@@ -70,7 +70,7 @@ namespace Archipelago.Core.Util.PCSX2
             }
             finally
             {
-                Memory.PlatformImpl.CloseHandle(processHandle);
+                PlatformMemory.PlatformMemory.PlatformImpl.CloseHandle(processHandle);
             }
         }
     }

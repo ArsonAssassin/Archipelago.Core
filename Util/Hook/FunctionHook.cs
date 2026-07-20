@@ -30,17 +30,17 @@ namespace Archipelago.Core.Util.Hook
         public FunctionHook(IntPtr targetAddress, HookCallback callback, int hookSize = 5, bool executeOriginalInstructions = true)
         {
             _targetAddress = targetAddress;
-            _processHandle = Memory.GetProcessH(Memory.CurrentProcId);
+            _processHandle = PlatformMemory.PlatformMemory.GetProcessH(PlatformMemory.PlatformMemory.CurrentProcId);
             _hookSize = hookSize;
             _executeOriginalInstructions = executeOriginalInstructions;
             Callback = callback;
 
             // Read original bytes
             _originalBytes = new byte[_hookSize];
-            Memory.PlatformImpl.ReadProcessMemory(_processHandle, (ulong)_targetAddress, _originalBytes, _hookSize, out _);
+            PlatformMemory.PlatformMemory.PlatformImpl.ReadProcessMemory(_processHandle, (ulong)_targetAddress, _originalBytes, _hookSize, out _);
 
             // Allocate parameter storage
-            _parameterStorage = Memory.Allocate(1024);
+            _parameterStorage = PlatformMemory.PlatformMemory.Allocate(1024);
 
             // Create managed callback delegate and get function pointer
             var nativeCallback = new NativeHookCallback(HandleNativeCallback);
@@ -54,7 +54,7 @@ namespace Archipelago.Core.Util.Hook
         }
         private IntPtr CreateHookStub()
         {
-            IntPtr stubMemory = Memory.Allocate(1024, Memory.PAGE_EXECUTE_READWRITE);
+            IntPtr stubMemory = PlatformMemory.PlatformMemory.Allocate(1024, PlatformMemory.PlatformMemory.PAGE_EXECUTE_READWRITE);
             byte[] stubCode = GenerateHookStub();
             Memory.Write((ulong)stubMemory, stubCode);
             return stubMemory;
@@ -280,16 +280,16 @@ namespace Archipelago.Core.Util.Hook
         {
             if (_isInstalled) return true;
 
-            if (!Memory.PlatformImpl.VirtualProtectEx(_processHandle, _targetAddress, (IntPtr)_hookSize,
-                Memory.PAGE_EXECUTE_READWRITE, out uint oldProtect))
+            if (!PlatformMemory.PlatformMemory.PlatformImpl.VirtualProtectEx(_processHandle, _targetAddress, (IntPtr)_hookSize,
+                PlatformMemory.PlatformMemory.PAGE_EXECUTE_READWRITE, out uint oldProtect))
             {
                 return false;
             }
 
-            bool success = Memory.PlatformImpl.WriteProcessMemory(_processHandle, (ulong)_targetAddress,
+            bool success = PlatformMemory.PlatformMemory.PlatformImpl.WriteProcessMemory(_processHandle, (ulong)_targetAddress,
                 _jumpBytes, _jumpBytes.Length, out _);
 
-            Memory.PlatformImpl.VirtualProtectEx(_processHandle, _targetAddress, (IntPtr)_hookSize,
+            PlatformMemory.PlatformMemory.PlatformImpl.VirtualProtectEx(_processHandle, _targetAddress, (IntPtr)_hookSize,
                 oldProtect, out _);
 
             _isInstalled = success;
@@ -299,16 +299,16 @@ namespace Archipelago.Core.Util.Hook
         {
             if (!_isInstalled) return true;
 
-            if (!Memory.PlatformImpl.VirtualProtectEx(_processHandle, _targetAddress, (IntPtr)_hookSize,
-                Memory.PAGE_EXECUTE_READWRITE, out uint oldProtect))
+            if (!PlatformMemory.PlatformMemory.PlatformImpl.VirtualProtectEx(_processHandle, _targetAddress, (IntPtr)_hookSize,
+                PlatformMemory.PlatformMemory.PAGE_EXECUTE_READWRITE, out uint oldProtect))
             {
                 return false;
             }
 
-            bool success = Memory.PlatformImpl.WriteProcessMemory(_processHandle, (ulong)_targetAddress,
+            bool success = PlatformMemory.PlatformMemory.PlatformImpl.WriteProcessMemory(_processHandle, (ulong)_targetAddress,
                 _originalBytes, _originalBytes.Length, out _);
 
-            Memory.PlatformImpl.VirtualProtectEx(_processHandle, _targetAddress, (IntPtr)_hookSize,
+            PlatformMemory.PlatformMemory.PlatformImpl.VirtualProtectEx(_processHandle, _targetAddress, (IntPtr)_hookSize,
                 oldProtect, out _);
 
             _isInstalled = !success;
@@ -321,10 +321,10 @@ namespace Archipelago.Core.Util.Hook
             Uninstall();
 
             if (_hookAddress != IntPtr.Zero)
-                Memory.FreeMemory(_hookAddress);
+                PlatformMemory.PlatformMemory.FreeMemory(_hookAddress);
 
             if (_parameterStorage != IntPtr.Zero)
-                Memory.FreeMemory(_parameterStorage);
+                PlatformMemory.PlatformMemory.FreeMemory(_parameterStorage);
 
             _disposed = true;
         }

@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using Archipelago.Core.Util.PlatformMemory;
 using static Archipelago.Core.Util.Enums;
+using PM = Archipelago.Core.Util.PlatformMemory.PlatformMemory;
 
 namespace Archipelago.Core.Util
 {
@@ -21,193 +22,121 @@ namespace Archipelago.Core.Util
     public class Memory
     {
         #region Platform Implementation
-        internal static readonly IMemory PlatformImpl;
-        private static nint _currentHandle;
-        private static int _currentProcessId = 0;
+        private static IMemory _memoryProvider = PlatformMemory.PlatformMemory.PlatformImpl;
 
-        static Memory()
-        {
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                PlatformImpl = new LinuxMemory();
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                PlatformImpl = new MacOSMemory();
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                PlatformImpl = new WindowsMemory();
-            else 
-                throw new PlatformNotSupportedException();
-        }
+        public static void Initialize(IMemory provider) => _memoryProvider = provider;
         #endregion
 
-        #region Constants
-        public const uint PROCESS_VM_READ = 0x0010;
-        public const uint PROCESS_VM_WRITE = 0x0020;
-        public const uint PROCESS_VM_OPERATION = 0x0008;
-        public const uint PROCESS_CREATE_THREAD = 0x0002;
-        public const uint PROCESS_SUSPEND_RESUME = 0x0800;
+        #region Obsolete PlatformMemory forwards
+        // These members moved to PlatformMemory. Shims kept here so existing
+        // consumers get a deprecation warning rather than a hard compile error.
 
-        public const uint PAGE_READONLY = 0x02;
-        public const uint PAGE_READWRITE = 0x04;
+        [Obsolete("Use PlatformMemory.CurrentProcId")]
+        public static int CurrentProcId { get => PM.CurrentProcId; set => PM.CurrentProcId = value; }
+
+        [Obsolete("Use PlatformMemory.GlobalOffset")]
+        public static ulong GlobalOffset { get => PM.GlobalOffset; set => PM.GlobalOffset = value; }
+
+        [Obsolete("Use PlatformMemory.BIZHAWK_PROCESSID")]
+        public static int BIZHAWK_PROCESSID => PM.BIZHAWK_PROCESSID;
+
+        [Obsolete("Use PlatformMemory.EPSXE_PROCESSID")]
+        public static int EPSXE_PROCESSID => PM.EPSXE_PROCESSID;
+
+        [Obsolete("Use PlatformMemory.PCSX2_PROCESSID")]
+        public static int PCSX2_PROCESSID => PM.PCSX2_PROCESSID;
+
+        [Obsolete("Use PlatformMemory.XENIA_PROCESSID")]
+        public static int XENIA_PROCESSID => PM.XENIA_PROCESSID;
+
+        [Obsolete("Use PlatformMemory.PAGE_EXECUTE_READWRITE")]
         public const uint PAGE_EXECUTE_READWRITE = 0x40;
 
-        public const uint MEM_RELEASE = 0x00008000;
-        public const uint MEM_COMMIT = 0x00001000;
-        public const uint MEM_RESERVE = 0x00002000;
-        public const uint MEM_TOP_DOWN = 0x00100000;
-        #endregion
+        [Obsolete("Use PlatformMemory.PROCESS_VM_READ")]
+        public const uint PROCESS_VM_READ = 0x0010;
 
-        #region Process Management
-        public static int CurrentProcId { get; set; }
-        public static ulong GlobalOffset { get; set; } = 0;
-        public static IntPtr CurrentHandle()
-        {
-            if (_currentHandle == IntPtr.Zero || _currentProcessId != CurrentProcId)
-            {
-                _currentHandle = GetProcessH(CurrentProcId);
-                _currentProcessId = CurrentProcId;
-            }
-            return (nint)_currentHandle;
-        }
-        public static void CloseCurrentHandle()
-        {
-            if (_currentHandle != IntPtr.Zero)
-            {
-                PlatformImpl.CloseHandle(_currentHandle);
-            }
-        }
-        internal static IntPtr GetProcessH(int proc)
-        {
-            if (proc == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.OpenProcess(PROCESS_VM_OPERATION | PROCESS_SUSPEND_RESUME | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, false, proc);
-        }
+        [Obsolete("Use PlatformMemory.PROCESS_VM_WRITE")]
+        public const uint PROCESS_VM_WRITE = 0x0020;
 
-        public static int GetProcessID(string procName)
-        {
-            int procPID = PlatformImpl.GetPID(procName);
-            if (procPID > 0)
-            {
-                return procPID;
-            }
-            else
-            {
-                return GetProcFromIdFromPartial(procName);
-            }
-        }
-        public static List<int> GetProcessIDs(string procName)
-        {
-            List<int> procPIDlist = PlatformImpl.GetPIDs(procName);
-            if (procPIDlist.Count > 0)
-            {
-                return procPIDlist;
-            }
-            else
-            {
-                return GetProcFromIdsFromPartial(procName);
-            }
-        }
-        public static int GetProcFromIdFromPartial(string procPartialName)
-        {
-            Console.WriteLine($"Find Process ID {procPartialName}");
-            Process[] allProcesses = Process.GetProcesses();
+        [Obsolete("Use PlatformMemory.PROCESS_VM_OPERATION")]
+        public const uint PROCESS_VM_OPERATION = 0x0008;
 
-            List<Process> foundProcesses = allProcesses
-                .Where(p => p.ProcessName.Contains(procPartialName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+        [Obsolete("Use PlatformMemory.GetCurrentProcess()")]
+        public static System.Diagnostics.Process GetCurrentProcess() => PM.GetCurrentProcess();
 
-            if (foundProcesses.Count >= 1)
-            {
-                return foundProcesses[0].Id;
-            }
-            else
-            {
-                PlatformImpl.CloseHandle(CurrentHandle());
-                return 0;
-            }
+        [Obsolete("Use PlatformMemory.GetBaseAddress(string)")]
+        public static ulong GetBaseAddress(string modName) => PM.GetBaseAddress(modName);
 
-        }
-        public static List<int> GetProcFromIdsFromPartial(string procPartialName)
-        {
-            Console.WriteLine($"Find Process ID {procPartialName}");
-            Process[] allProcesses = Process.GetProcesses();
+        [Obsolete("Use PlatformMemory.GetProcessID(string)")]
+        public static int GetProcessID(string procName) => PM.GetProcessID(procName);
 
-            List<Process> foundProcesses = allProcesses
-                .Where(p => p.ProcessName.Contains(procPartialName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+        [Obsolete("Use PlatformMemory.GetProcessIDs(string)")]
+        public static System.Collections.Generic.List<int> GetProcessIDs(string procName) => PM.GetProcessIDs(procName);
 
-            if (foundProcesses.Count >= 1)
-            {
-                return foundProcesses.Select(x=> x.Id).ToList();
-            }
-            else
-            {
-                PlatformImpl.CloseHandle(CurrentHandle());
-                return [];
-            }
+        [Obsolete("Use PlatformMemory.GetProcIdFromExe(string)")]
+        public static int GetProcIdFromExe(string exe) => PM.GetProcIdFromExe(exe);
 
-        }
-        public static ulong GetPCSX2Offset()
-        {
-            return PCSX2.Helpers.GetEEmemOffset();
-        }
-        public static ulong GetDuckstationOffset()
-        {
-            return Duckstation.Helpers.GetEEmemOffset();
-        }
-        public static Process GetProcessById(int id)
-        {
-            return Process.GetProcessById(id);
-        }
+        [Obsolete("Use PlatformMemory.GetProcIdsFromExe(string)")]
+        public static System.Collections.Generic.List<int> GetProcIdsFromExe(string exe) => PM.GetProcIdsFromExe(exe);
 
-        public static Process GetCurrentProcess()
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return GetProcessById(CurrentProcId);
-        }
+        [Obsolete("Use PlatformMemory.GetProcFromIdFromPartial(string)")]
+        public static int GetProcFromIdFromPartial(string name) => PM.GetProcFromIdFromPartial(name);
 
-        public static ulong GetBaseAddress(string modName)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            var process = Process.GetProcessById(CurrentProcId);
-            return (ulong)(process.Modules
-                .Cast<ProcessModule>()
-                .FirstOrDefault(x => x.ModuleName.Contains(modName, StringComparison.OrdinalIgnoreCase))
-                ?.BaseAddress ?? IntPtr.Zero);
-        }
+        [Obsolete("Use PlatformMemory.GetProcFromIdsFromPartial(string)")]
+        public static System.Collections.Generic.List<int> GetProcFromIdsFromPartial(string name) => PM.GetProcFromIdsFromPartial(name);
 
-        public static string GetLastErrorMessage()
-        {
-            return PlatformImpl.GetLastErrorMessage();
-        }
+        [Obsolete("Use PlatformMemory.GetPCSX2Offset()")]
+        public static ulong GetPCSX2Offset() => PM.GetPCSX2Offset();
+
+        [Obsolete("Use PlatformMemory.GetDuckstationOffset()")]
+        public static ulong GetDuckstationOffset() => PM.GetDuckstationOffset();
+
+        [Obsolete("Use PlatformMemory.GetProcessById(int)")]
+        public static System.Diagnostics.Process GetProcessById(int id) => PM.GetProcessById(id);
+
+        [Obsolete("Use PlatformMemory.GetLastErrorMessage()")]
+        public static string GetLastErrorMessage() => PM.GetLastErrorMessage();
+
+        [Obsolete("Use PlatformMemory.CloseCurrentHandle()")]
+        public static void CloseCurrentHandle() => PM.CloseCurrentHandle();
+
+        [Obsolete("Use PlatformMemory.FreezeAddress(ulong, int)")]
+        public static bool FreezeAddress(ulong address, int length) => PM.FreezeAddress(address, length);
+
+        [Obsolete("Use PlatformMemory.UnfreezeAddress(ulong, int)")]
+        public static bool UnfreezeAddress(ulong address, int length) => PM.UnfreezeAddress(address, length);
+
+        [Obsolete("Use PlatformMemory.Allocate(uint, uint)")]
+        public static IntPtr Allocate(uint size, uint flProtect = PlatformMemory.PlatformMemory.PAGE_READWRITE) => PM.Allocate(size, flProtect);
+
+        [Obsolete("Use PlatformMemory.AllocateAbove(uint)")]
+        public static IntPtr AllocateAbove(uint size) => PM.AllocateAbove(size);
+
+        [Obsolete("Use PlatformMemory.FreeMemory(IntPtr)")]
+        public static bool FreeMemory(IntPtr address) => PM.FreeMemory(address);
+
+        [Obsolete("Use PlatformMemory.ExecuteCommand(byte[], uint)")]
+        public static uint ExecuteCommand(byte[] bytes, uint timeoutSeconds = 0xFFFFFFFF) => PM.ExecuteCommand(bytes, timeoutSeconds);
+
+        [Obsolete("Use PlatformMemory.GetModuleInfo(string)")]
+        public static MODULEINFO GetModuleInfo(string moduleName) => PM.GetModuleInfo(moduleName);
+
+        [Obsolete("Use PlatformMemory.GetModuleBaseAddress(int, string)")]
+        public static IntPtr GetModuleBaseAddress(int pid, string moduleName) => PM.GetModuleBaseAddress(pid, moduleName);
+
+        [Obsolete("Use PlatformMemory.GetExportAddress(int, IntPtr, string)")]
+        public static IntPtr GetExportAddress(int pid, IntPtr moduleBase, string exportName) => PM.GetExportAddress(pid, moduleBase, exportName);
         #endregion
 
         #region Read Operations
-        public static byte ReadByte(ulong address)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            byte[] buffer = new byte[1];
-            PlatformImpl.ReadProcessMemory(CurrentHandle(), address + GlobalOffset, buffer, buffer.Length, out _);
-            return buffer[0];
-        }
 
-        public static byte[] ReadByteArray(ulong address, int length)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            byte[] buffer = new byte[length];
-            PlatformImpl.ReadProcessMemory(CurrentHandle(), address + GlobalOffset, buffer, buffer.Length, out _);
-            return buffer;
-        }
         public static T ReadStruct<T>(ulong address)
         {
             int size = Marshal.SizeOf(typeof(T));
-            byte[] buffer = new byte[size]; // Allocate the buffer
+            byte[] buffer = _memoryProvider.ReadByteArray(address, size);
             GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
             try
             {
-                if (handle.Target == null)
-                {
-                    throw new NullReferenceException();
-                }
-                PlatformImpl.ReadProcessMemory(CurrentHandle(), address + GlobalOffset, buffer, size, out _);
                 return (T)Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T));
             }
             finally
@@ -218,22 +147,15 @@ namespace Archipelago.Core.Util
         public static List<T> ReadStructs<T>(ulong address, int numStructs)
         {
             int size = Marshal.SizeOf(typeof(T));
-            byte[] buffer = new byte[size * numStructs]; // Allocate the buffer
-            GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned); // Pin the buffer
+            byte[] buffer = _memoryProvider.ReadByteArray(address, size * numStructs);
+            GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
             List<T> structures = new List<T>();
             try
             {
-                if (handle.Target == null)
-                {
-                    throw new NullReferenceException();
-                }
-                PlatformImpl.ReadProcessMemory(CurrentHandle(), address + GlobalOffset, buffer, numStructs * size, out _);
                 IntPtr basePtr = handle.AddrOfPinnedObject();
                 for (int i = 0; i < numStructs; i++)
                 {
-                    // Calculate the pointer for the current struct instance
                     IntPtr currentStructPtr = new IntPtr(basePtr.ToInt64() + (long)i * size);
-                    // Unmarshal the struct from the calculated pointer
                     T structure = (T)Marshal.PtrToStructure(currentStructPtr, typeof(T));
                     structures.Add(structure);
                 }
@@ -249,7 +171,7 @@ namespace Archipelago.Core.Util
             if (bitNumber < 0 || bitNumber > 7)
                 throw new ArgumentOutOfRangeException(nameof(bitNumber), "Bit number must be between 0-7");
 
-            byte b = ReadByte(address);
+            byte b = _memoryProvider.ReadByte(address);
 
             if (endianness == Endianness.Big)
             {
@@ -261,55 +183,55 @@ namespace Archipelago.Core.Util
 
         public static ushort ReadUShort(ulong address, Endianness endianness = Endianness.Little)
         {
-            byte[] buffer = ReadByteArray(address, sizeof(ushort));
+            byte[] buffer = _memoryProvider.ReadByteArray(address, sizeof(ushort));
             return BitConverter.ToUInt16(HandleEndianness(buffer, endianness), 0);
         }
 
         public static short ReadShort(ulong address, Endianness endianness = Endianness.Little)
         {
-            byte[] buffer = ReadByteArray(address, sizeof(short));
+            byte[] buffer = _memoryProvider.ReadByteArray(address, sizeof(short));
             return BitConverter.ToInt16(HandleEndianness(buffer, endianness), 0);
         }
 
         public static uint ReadUInt(ulong address, Endianness endianness = Endianness.Little)
         {
-            byte[] buffer = ReadByteArray(address, sizeof(uint));
+            byte[] buffer = _memoryProvider.ReadByteArray(address, sizeof(uint));
             return BitConverter.ToUInt32(HandleEndianness(buffer, endianness), 0);
         }
 
         public static int ReadInt(ulong address, Endianness endianness = Endianness.Little)
         {
-            byte[] buffer = ReadByteArray(address, sizeof(int));
+            byte[] buffer = _memoryProvider.ReadByteArray(address, sizeof(int));
             return BitConverter.ToInt32(HandleEndianness(buffer, endianness), 0);
         }
 
         public static long ReadLong(ulong address, Endianness endianness = Endianness.Little)
         {
-            byte[] buffer = ReadByteArray(address, sizeof(long));
+            byte[] buffer = _memoryProvider.ReadByteArray(address, sizeof(long));
             return BitConverter.ToInt64(HandleEndianness(buffer, endianness), 0);
         }
 
         public static ulong ReadULong(ulong address, Endianness endianness = Endianness.Little)
         {
-            byte[] buffer = ReadByteArray(address, sizeof(ulong));
+            byte[] buffer = _memoryProvider.ReadByteArray(address, sizeof(ulong));
             return BitConverter.ToUInt64(HandleEndianness(buffer, endianness), 0);
         }
 
         public static float ReadFloat(ulong address, Endianness endianness = Endianness.Little)
         {
-            byte[] buffer = ReadByteArray(address, sizeof(float));
+            byte[] buffer = _memoryProvider.ReadByteArray(address, sizeof(float));
             return BitConverter.ToSingle(HandleEndianness(buffer, endianness), 0);
         }
 
         public static double ReadDouble(ulong address, Endianness endianness = Endianness.Little)
         {
-            byte[] buffer = ReadByteArray(address, sizeof(double));
+            byte[] buffer = _memoryProvider.ReadByteArray(address, sizeof(double));
             return BitConverter.ToDouble(HandleEndianness(buffer, endianness), 0);
         }
 
         public static string ReadString(ulong address, int length, Endianness endianness = Endianness.Little, Encoding encoding = null)
         {
-            byte[] dataBuffer = ReadByteArray(address, length);
+            byte[] dataBuffer = _memoryProvider.ReadByteArray(address, length);
             encoding ??= Encoding.UTF8;
             return encoding.GetString(dataBuffer);
         }
@@ -345,7 +267,7 @@ namespace Archipelago.Core.Util
                     {
                         throw new ArgumentException($"Byte array property {property.Name} must specify a positive ByteArrayLength");
                     }
-                    var byteArray = ReadByteArray(address, attribute.ByteArrayLength);
+                    var byteArray = _memoryProvider.ReadByteArray(address, attribute.ByteArrayLength);
                     property.SetValue(result, byteArray);
                 }
                 else if (property.PropertyType.IsGenericType &&
@@ -406,7 +328,7 @@ namespace Archipelago.Core.Util
         {
             object result = typeof(T) switch
             {
-                Type t when t == typeof(byte) => ReadByte(address),
+                Type t when t == typeof(byte) => _memoryProvider.ReadByte(address),
                 Type t when t == typeof(short) => ReadShort(address, endianness),
                 Type t when t == typeof(ushort) => ReadUShort(address, endianness),
                 Type t when t == typeof(int) => ReadInt(address, endianness),
@@ -433,7 +355,7 @@ namespace Archipelago.Core.Util
             }
             else if (propertyType == typeof(byte))
             {
-                return ReadByte(address);
+                return _memoryProvider.ReadByte(address);
             }
             else if (propertyType == typeof(short))
             {
@@ -474,38 +396,29 @@ namespace Archipelago.Core.Util
 
             throw new NotSupportedException($"Type {propertyType.Name} is not supported for memory reading");
         }
+        public static byte[] ReadByteArray(ulong address, int length) => _memoryProvider.ReadByteArray(address, length);
+        public static byte ReadByte(ulong address) => _memoryProvider.ReadByte(address);
         #endregion
 
         #region Write Operations
+        public static bool WriteByte(ulong address, byte value) => _memoryProvider.WriteByte(address, value);
+        public static void WriteByteArray(ulong address, byte[] data, Endianness endianness = Endianness.Little)
+            => _memoryProvider.WriteByteArray(address, data, endianness);
         public static bool Write(ulong address, byte[] value)
         {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.WriteProcessMemory(CurrentHandle(), address + GlobalOffset, value, value.Length, out _);
+            _memoryProvider.WriteByteArray(address, value);
+            return true;
         }
 
         public static bool WriteString(ulong address, string value, Endianness endianness = Endianness.Little, Encoding encoding = null)
         {
             encoding ??= Encoding.UTF8;
             byte[] bytes = encoding.GetBytes(value);
-            WriteByteArray(address, bytes, endianness);
+            _memoryProvider.WriteByteArray(address, bytes, endianness);
             return true;
         }
 
-        public static bool WriteByte(ulong address, byte value)
-        {
-            return Write(address, new[] { value });
-        }
-
-        public static void WriteByteArray(ulong address, byte[] data, Endianness endianness = Endianness.Little)
-        {
-            if (endianness == Endianness.Big && BitConverter.IsLittleEndian ||
-                endianness == Endianness.Little && !BitConverter.IsLittleEndian)
-            {
-                data = data.ToArray(); // Create a copy before reversing
-                Array.Reverse(data);
-            }
-            Write(address, data);
-        }
+        
 
         public static bool Write(ulong address, ushort value, Endianness endianness = Endianness.Little)
         {
@@ -694,13 +607,12 @@ namespace Archipelago.Core.Util
         {
             int size = Marshal.SizeOf(typeof(T));
             byte[] buffer = new byte[size];
-
             IntPtr ptr = Marshal.AllocHGlobal(size);
             try
             {
                 Marshal.StructureToPtr(str, ptr, true);
                 Marshal.Copy(ptr, buffer, 0, size);
-                PlatformImpl.WriteProcessMemory(CurrentHandle(), address + GlobalOffset, buffer, size, out _);
+                _memoryProvider.WriteByteArray(address, buffer);
             }
             finally
             {
@@ -709,45 +621,12 @@ namespace Archipelago.Core.Util
         }
         #endregion
 
-        #region Memory Operations
-        public static bool FreezeAddress(ulong address, int length)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.VirtualProtectEx(CurrentHandle(), (IntPtr)address, (IntPtr)length, PAGE_READONLY, out var oldProtect);
-        }
 
-        public static bool UnfreezeAddress(ulong address, int length)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.VirtualProtectEx(CurrentHandle(), (IntPtr)address, (IntPtr)length, PAGE_READWRITE, out var oldProtect);
-        }
-
-        public static IntPtr Allocate(uint size, uint flProtect = PAGE_READWRITE)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.VirtualAllocEx(CurrentHandle(), IntPtr.Zero, (IntPtr)size, MEM_COMMIT, flProtect);
-        }
-
-        public static IntPtr AllocateAbove(uint size)
-        {
-            IntPtr freeAddress = PlatformImpl.FindFreeRegionBelow4GB(CurrentHandle(), size);
-            return PlatformImpl.VirtualAllocEx(CurrentHandle(), freeAddress, (IntPtr)size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        }
-
-        public static bool FreeMemory(IntPtr address)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.VirtualFreeEx(CurrentHandle(), address, IntPtr.Zero, MEM_RELEASE);
-        }
-        #endregion
 
         #region Pattern Scanning
         public static IntPtr FindSignature(IntPtr start, int size, byte[] pattern, string mask)
         {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            byte[] buffer = new byte[size];
-
-            PlatformImpl.ReadProcessMemory(CurrentHandle(), (ulong)start, buffer, size, out var bytesRead);
+            byte[] buffer = _memoryProvider.ReadByteArray((ulong)start, size);
 
             for (int i = 0; i < size - pattern.Length; i++)
             {
@@ -768,56 +647,7 @@ namespace Archipelago.Core.Util
         }
         #endregion
 
-        #region Remote Execution
-        private static uint Execute(IntPtr address, uint timeoutSeconds = 0xFFFFFFFF)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.Execute(CurrentHandle(), address, timeoutSeconds);
-        }
 
-        public static uint ExecuteCommand(byte[] bytes, uint timeoutSeconds = 0xFFFFFFFF)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.ExecuteCommand(CurrentHandle(), bytes, timeoutSeconds);
-        }
-        #endregion
-
-        #region Module Information
-        public static MODULEINFO GetModuleInfo(string moduleName)
-        {
-            if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
-            return PlatformImpl.GetModuleInfo(CurrentHandle(), moduleName);
-        }
-        public static IntPtr GetModuleBaseAddress(int pid, string moduleName)
-        {
-            return PlatformImpl.GetModuleBaseAddress(pid, moduleName);
-        }
-        public static IntPtr GetExportAddress(int pid, IntPtr moduleBase, string exportName)
-        {
-            return PlatformImpl.GetExportAddress(pid, moduleBase, exportName);
-        }
-        #endregion
-
-        #region Common Process IDs
-        public static int BIZHAWK_PROCESSID => GetProcessID("EmuHawk");
-        public static int EPSXE_PROCESSID => GetProcessID("ePSXe");
-        public static int PCSX2_PROCESSID
-        {
-            get
-            {
-                var pid = GetProcessID("pcsx2");
-                if (pid == 0)
-                {
-                    pid = GetProcessID("pcsx2-qt");
-                }
-                return pid;
-            }
-        }
-        public static int XENIA_PROCESSID => GetProcessID("Xenia");
-
-        public static int GetProcIdFromExe(string exe) => GetProcessID(exe);
-        public static List<int> GetProcIdsFromExe(string exe) => GetProcessIDs(exe);
-        #endregion
 
         #region Utilities
         public static byte[] ReadFromPointer(ulong ptrAddress, int length, int depth)
@@ -830,13 +660,13 @@ namespace Archipelago.Core.Util
         public static Task MonitorAddressForAction<T>(ulong address, Action action, Func<T, bool> criteria)
         {
             int size = GetElementSize(typeof(T));
-            var initialValue = ConvertByteArrayToT<T>(Memory.ReadByteArray(address, size));
+            var initialValue = ConvertByteArrayToT<T>(ReadByteArray(address, size));
             return Task.Run(async () =>
             {
                 var value = initialValue;
                 while (!criteria(value))
                 {
-                    value = ConvertByteArrayToT<T>(Memory.ReadByteArray(address, size));
+                    value = ConvertByteArrayToT<T>(ReadByteArray(address, size));
                     await Task.Delay(10);
                 }
                 action();

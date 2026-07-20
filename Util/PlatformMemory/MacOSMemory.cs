@@ -11,7 +11,7 @@ using static Archipelago.Core.Util.Enums;
 
 namespace Archipelago.Core.Util.PlatformMemory
 {
-    public class MacOSMemory : IMemory
+    public class MacOSMemory : IInvocableMemory
     {
         #region Constants
         // ptrace requests (BSD-style)

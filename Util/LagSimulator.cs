@@ -74,7 +74,7 @@ namespace Archipelago.Core.Util
 
         private void SuspendProcess()
         {
-            foreach (ProcessThread thread in Memory.GetCurrentProcess().Threads)
+            foreach (ProcessThread thread in PlatformMemory.PlatformMemory.GetCurrentProcess().Threads)
             {
                 IntPtr threadHandle = OpenThread(ThreadAccess.SUSPEND_RESUME, false, (uint)thread.Id);
                 if (threadHandle != IntPtr.Zero)
@@ -93,7 +93,7 @@ namespace Archipelago.Core.Util
 
         private void ResumeProcess()
         {
-            foreach (ProcessThread thread in Memory.GetCurrentProcess().Threads)
+            foreach (ProcessThread thread in PlatformMemory.PlatformMemory.GetCurrentProcess().Threads)
             {
                 IntPtr threadHandle = OpenThread(ThreadAccess.SUSPEND_RESUME, false, (uint)thread.Id);
                 if (threadHandle != IntPtr.Zero)

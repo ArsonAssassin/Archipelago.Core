@@ -5,6 +5,7 @@ using Archipelago.Core.Util;
 using Archipelago.Core.Util.GPS;
 using Archipelago.Core.Util.Overlay;
 using Archipelago.Core.Util.PlatformLibrary;
+using Archipelago.Core.Util.PlatformMemory;
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
 using Archipelago.MultiClient.Net.Enums;
@@ -92,7 +93,7 @@ namespace Archipelago.Core
 
         public ArchipelagoClient(IGameClient gameClient)
         {
-            Memory.CurrentProcId = gameClient.ProcId;
+            PlatformMemory.CurrentProcId = gameClient.ProcId;
             AppDomain.CurrentDomain.ProcessExit += async (sender, e) => await SaveGameStateAsync();
             _gameClient = gameClient;
             _gameClientPollTimer = new Timer(PeriodicGameClientConnectionCheck, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
@@ -164,13 +165,13 @@ namespace Archipelago.Core
         public void IntializeOverlayService(IOverlayService overlayService)
         {
             OverlayService = overlayService;
-            OverlayService.AttachToWindow(Memory.GetCurrentProcess().MainWindowHandle);
+            OverlayService.AttachToWindow(PlatformMemory.GetCurrentProcess().MainWindowHandle);
             isOverlayEnabled = true;
         }
         public async Task Connect(string host, string gameName, CancellationToken cancellationToken = default)
         {
             cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
-            Disconnect();
+            DisconnectHandlers();
             try
             {
                 CurrentSession = ArchipelagoSessionFactory.CreateSession(host);
@@ -180,7 +181,6 @@ namespace Archipelago.Core
 
                 CurrentSession.Socket.SocketClosed += Socket_SocketClosed;
                 CurrentSession.MessageLog.OnMessageReceived += HandleMessageReceived;
-                /* Does this do anything? We haven't added a listener on PacketReceived */
                 CurrentSession.Socket.SendPacket(new SetNotifyPacket() { Keys = new[] { "ItemIndex" } });
                 CurrentSession.Socket.SendPacket(new SetNotifyPacket() { Keys = new[] { "CustomValues" } });
                 CurrentSession.Socket.SendPacket(new SetNotifyPacket() { Keys = new[] { "GPS" } });
@@ -209,9 +209,7 @@ namespace Archipelago.Core
             {
                 Log.Information($"Disconnecting...");
                 CurrentSession.Socket.DisconnectAsync();
-                CurrentSession.Socket.SocketClosed -= Socket_SocketClosed;
-                CurrentSession.MessageLog.OnMessageReceived -= HandleMessageReceived;
-                CurrentSession.Items.ItemReceived -= ItemReceivedHandler;
+                DisconnectHandlers();
                 LocationManager?.CancelMonitors();
                 ItemManager?.StopReceiving();
                 _gpsStateManager?.Dispose();
@@ -222,10 +220,15 @@ namespace Archipelago.Core
             IsConnected = false;
             IsLoggedIn = false;
             Disconnected?.Invoke(this, new ConnectionChangedEventArgs(false));
-            //Memory.CurrentProcId = 0; // comment out for now
+            PlatformMemory.CurrentProcId = 0; // comment out for now
             Log.Information($"Disconnected");
         }
-
+        private void DisconnectHandlers()
+        {
+            CurrentSession.Socket.SocketClosed -= Socket_SocketClosed;
+            CurrentSession.MessageLog.OnMessageReceived -= HandleMessageReceived;
+            CurrentSession.Items.ItemReceived -= ItemReceivedHandler;
+        }
         public async Task Login(string playerName, string password = null, ItemsHandlingFlags? itemsHandlingFlags = null, CancellationToken cancellationToken = default)
         {
             cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);

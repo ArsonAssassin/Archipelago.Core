@@ -1,4 +1,5 @@
 ﻿using Archipelago.Core.Util;
+using Archipelago.Core.Util.PlatformMemory;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -15,7 +16,7 @@ namespace Archipelago.Core.Helpers
             ProcessName = exeName;
         }
         public bool IsConnected { get; set; }
-        public int ProcId { get { return Memory.GetProcIdFromExe(ProcessName); } set { } }
+        public int ProcId { get { return PlatformMemory.GetProcIdFromExe(ProcessName); } set { } }
         public string ProcessName { get; set; }
 
         public bool Connect()
