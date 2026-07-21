@@ -11,14 +11,14 @@ using System.Threading.Tasks;
 
 namespace Archipelago.Core.Helpers
 {
-    public class ItemManager : IDisposable
+    public class ItemManager : IItemManager
     {
         private GameStateManager _gameStateManager;
         private bool isReadyToReceiveItems = false;
         private readonly SemaphoreSlim _receiveItemSemaphore = new SemaphoreSlim(1, 1);
         private Queue<ItemInfo> InProcessItems { get; set; }
         private Queue<ItemInfo> ItemsReceived { get; set; }
-        public int itemsReceivedCurrentSession { get; set; }
+        public int ItemsReceivedCurrentSession { get; set; }
         public event EventHandler<ItemReceivedEventArgs>? ItemReceived;
 
         public ItemManager(ref GameStateManager gameStateManager)
@@ -27,7 +27,7 @@ namespace Archipelago.Core.Helpers
         }
         public void Initialize()
         {
-            itemsReceivedCurrentSession = 0;
+            ItemsReceivedCurrentSession = 0;
             ItemsReceived = [];
             InProcessItems = [];
         }
@@ -68,16 +68,16 @@ namespace Archipelago.Core.Helpers
                 // for each item in the InProcessItems queue, try to process it.
                 bool abletopeek = InProcessItems.TryPeek(out newItemInfo);
                 Log.Logger.Debug($"able to peek? {abletopeek}");
-                Log.Logger.Debug($"ircs={itemsReceivedCurrentSession}, sii={_gameStateManager.SavedItemIndex}");
+                Log.Logger.Debug($"ircs={ItemsReceivedCurrentSession}, sii={_gameStateManager.SavedItemIndex}");
                 while (abletopeek && newItemInfo != null)
                 {
                     if (!isReadyToReceiveItems) // In case switch is flipped while mid-receiving
                     {
                         return;
                     }
-                    itemsReceivedCurrentSession++;
+                    ItemsReceivedCurrentSession++;
                     bool receiveSuccess = true;
-                    if (itemsReceivedCurrentSession > _gameStateManager.SavedItemIndex)
+                    if (ItemsReceivedCurrentSession > _gameStateManager.SavedItemIndex)
                     {
                         var item = new Item
                         {
@@ -105,7 +105,7 @@ namespace Archipelago.Core.Helpers
                         }
                         else
                         {
-                            itemsReceivedCurrentSession--; /* undo the earlier increment */
+                            ItemsReceivedCurrentSession--; /* undo the earlier increment */
                             isReadyToReceiveItems = false;
                             Log.Verbose($"Unable to receive item: {item.Name}.");
                             /* Game client knows the item failed to receive, so they can reinitiate it when they want to. */
@@ -172,7 +172,7 @@ namespace Archipelago.Core.Helpers
             Log.Logger.Debug($"IR queue has {ItemsReceived.Count} items");
 
             // start from receiving "item 0" again
-            itemsReceivedCurrentSession = 0;
+            ItemsReceivedCurrentSession = 0;
         }
 
         public void Dispose()

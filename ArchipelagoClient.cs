@@ -64,7 +64,7 @@ namespace Archipelago.Core
         public event EventHandler<ConnectionChangedEventArgs>? Connected;
         public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
         public event EventHandler? GameDisconnected;
-        public ItemsHandlingFlags? itemsFlags { get; set; }
+        public ItemsHandlingFlags? ItemsFlags { get; set; }
         public ArchipelagoSession CurrentSession { get; set; }
         public GPSHandler GPSHandler
         {
@@ -93,6 +93,14 @@ namespace Archipelago.Core
 
         public ArchipelagoClient(IGameClient gameClient)
         {
+            if (gameClient.ProcId != 0 && ElevationHelper.RequiresElevation(gameClient.ProcId))
+            {
+                Log.Warning("Process {ProcessId} requires elevated privileges. Memory operations will fail without administrator access.", gameClient.ProcId);
+                if (!ElevationHelper.IsElevated())
+                {
+                    throw new ElevationRequiredException(gameClient.ProcId);
+                }
+            }
             PlatformMemory.CurrentProcId = gameClient.ProcId;
             AppDomain.CurrentDomain.ProcessExit += async (sender, e) => await SaveGameStateAsync();
             _gameClient = gameClient;
@@ -162,7 +170,12 @@ namespace Archipelago.Core
             }
         }
 
+        [Obsolete("Use InitializeOverlayService (corrected spelling)")]
         public void IntializeOverlayService(IOverlayService overlayService)
+        {
+            InitializeOverlayService(overlayService);
+        }
+        public void InitializeOverlayService(IOverlayService overlayService)
         {
             OverlayService = overlayService;
             OverlayService.AttachToWindow(PlatformMemory.GetCurrentProcess().MainWindowHandle);
@@ -171,6 +184,11 @@ namespace Archipelago.Core
         public async Task Connect(string host, string gameName, CancellationToken cancellationToken = default)
         {
             cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
+            if (IsConnected)
+            {
+                Log.Warning("Already connected. Disconnecting before reconnecting.");
+                Disconnect();
+            }
             DisconnectHandlers();
             try
             {
@@ -188,8 +206,7 @@ namespace Archipelago.Core
             }
             catch (Exception ex)
             {
-                Log.Error("Couldn't connect to Archipelago");
-                Log.Error(ex.Message);
+                Log.Error(ex, "Couldn't connect to Archipelago");
             }
         }
         private async void ItemReceivedHandler(ReceivedItemsHelper helper)
@@ -227,7 +244,7 @@ namespace Archipelago.Core
             IsConnected = false;
             IsLoggedIn = false;
             Disconnected?.Invoke(this, new ConnectionChangedEventArgs(false));
-            PlatformMemory.CurrentProcId = 0; // comment out for now
+            PlatformMemory.CurrentProcId = 0;
             Log.Information($"Disconnected");
         }
         private void DisconnectHandlers()
@@ -247,7 +264,7 @@ namespace Archipelago.Core
             }
             if (itemsHandlingFlags != null)
             {
-                itemsFlags = itemsHandlingFlags;
+                ItemsFlags = itemsHandlingFlags;
             }
             var loginResult = await CurrentSession.LoginAsync(GameName, playerName, itemsHandlingFlags ?? ItemsHandlingFlags.AllItems, Version.Parse("0.6.5"), password: password, requestSlotData: true);
             Log.Verbose($"Login Result: {(loginResult.Successful ? "Success" : "Failed")}");
@@ -317,7 +334,7 @@ namespace Archipelago.Core
             }
             catch (Exception ex)
             {
-                Log.Error($"Could not send goal: {ex.Message}");
+                Log.Error(ex, "Could not send goal");
             }
         }
         public async Task MonitorLocationsAsync(List<ILocation> locations, CancellationToken cancellationToken = default)
@@ -340,28 +357,30 @@ namespace Archipelago.Core
 
         public void AddOverlayMessage(string message, CancellationToken cancellationToken = default)
         {
-            if (isOverlayEnabled)
-            {
-                cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
-                OverlayService.AddTextPopup(message);
-            }
+            if (!isOverlayEnabled) return;
+
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
+            if (cancellationToken.IsCancellationRequested) return;
+
+            OverlayService.AddTextPopup(message);
         }
         public void AddRichOverlayMessage(LogMessage message, CancellationToken cancellationToken = default)
         {
-            if (isOverlayEnabled)
+            if (!isOverlayEnabled) return;
+
+            cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
+            if (cancellationToken.IsCancellationRequested) return;
+
+            var spans = new List<ColoredTextSpan>();
+            foreach (var part in message.Parts)
             {
-                cancellationToken = Helpers.Helpers.CombineTokens(cancellationToken);
-                var spans = new List<ColoredTextSpan>();
-                foreach (var part in message.Parts)
+                spans.Add(new ColoredTextSpan()
                 {
-                    spans.Add(new ColoredTextSpan()
-                    {
-                        Text = part.Text,
-                        Color = new Util.Overlay.Color(part.Color.R, part.Color.G, part.Color.B)
-                    });
-                }
-                OverlayService.AddRichTextPopup(spans);
+                    Text = part.Text,
+                    Color = new Util.Overlay.Color(part.Color.R, part.Color.G, part.Color.B)
+                });
             }
+            OverlayService.AddRichTextPopup(spans);
         }
         
         public async Task SaveGPSAsync(CancellationToken cancellationToken = default)
@@ -389,16 +408,15 @@ namespace Archipelago.Core
         }
         public void Dispose()
         {
-
             try
             {
                 LocationManager?.CancelMonitors();
 
-                SaveGameStateAsync().Wait(TimeSpan.FromSeconds(5));
+                SaveGameStateAsync().GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {
-                Log.Error($"Could not finalise tasks: {ex.Message}");
+                Log.Error(ex, "Could not finalise tasks");
             }
 
             if (IsConnected)

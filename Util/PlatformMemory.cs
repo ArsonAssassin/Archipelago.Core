@@ -1,4 +1,5 @@
 ﻿using Archipelago.Core.Util.PlatformMemory;
+using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -105,7 +106,7 @@ namespace Archipelago.Core.Util.PlatformMemory
         }
         public static int GetProcFromIdFromPartial(string procPartialName)
         {
-            Console.WriteLine($"Find Process ID {procPartialName}");
+            Log.Debug("Find Process ID {ProcessName}", procPartialName);
             Process[] allProcesses = Process.GetProcesses();
 
             List<Process> foundProcesses = allProcesses
@@ -125,7 +126,7 @@ namespace Archipelago.Core.Util.PlatformMemory
         }
         public static List<int> GetProcFromIdsFromPartial(string procPartialName)
         {
-            Console.WriteLine($"Find Process ID {procPartialName}");
+            Log.Debug("Find Process ID {ProcessName}", procPartialName);
             Process[] allProcesses = Process.GetProcesses();
 
             List<Process> foundProcesses = allProcesses

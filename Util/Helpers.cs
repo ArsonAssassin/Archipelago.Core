@@ -46,7 +46,8 @@ namespace Archipelago.Core.Util
 
         public static T Random<T>(this IEnumerable<T> list) where T : struct
         {
-            return list.ToList()[new Random().Next(0, list.Count())];
+            var items = list.ToList();
+            return items[System.Random.Shared.Next(0, items.Count)];
         }
         public static string OpenEmbeddedResource(string resourceName)
         {

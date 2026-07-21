@@ -1,8 +1,9 @@
+using Serilog;
+using Serilog.Events;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using Serilog.Events;
 
 namespace Archipelago.Core.Util.Config
 {
@@ -110,6 +111,13 @@ namespace Archipelago.Core.Util.Config
         /// </summary>
         public void Save()
         {
+            var directory = Path.GetDirectoryName(_filePath);
+            if (!string.IsNullOrEmpty(directory) && !IsDirectoryWritable(directory))
+            {
+                Log.Warning("Config directory {Directory} is not writable. Config will not be saved. Run as administrator or choose a different config path.", directory);
+                return;
+            }
+
             var sections = new Dictionary<string, Dictionary<string, string>>(
                 StringComparer.OrdinalIgnoreCase)
             {
@@ -268,6 +276,29 @@ namespace Archipelago.Core.Util.Config
                     config.DefaultTextColorA = aVal;
             }
             return config;
+        }
+
+        private static bool IsDirectoryWritable(string path)
+        {
+            try
+            {
+                if (!Directory.Exists(path))
+                {
+                    Directory.CreateDirectory(path);
+                }
+                var testFile = Path.Combine(path, $".write_test_{Guid.NewGuid():N}");
+                File.WriteAllText(testFile, "");
+                File.Delete(testFile);
+                return true;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
         }
     }
 }

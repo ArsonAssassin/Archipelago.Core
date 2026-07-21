@@ -10,11 +10,11 @@ using System.Threading.Tasks;
 
 namespace Archipelago.Core.Helpers
 {
-    public class LocationManager
+    public class LocationManager : ILocationManager
     {
         private GameStateManager _gameStateManager;
         public event EventHandler<LocationCompletedEventArgs>? LocationCompleted;
-        public Func<bool>? EnableLocationsCondition;
+        public Func<bool>? EnableLocationsCondition { get; set; }
         private CancellationTokenSource _monitorToken { get; set; } = new CancellationTokenSource();
         private readonly object _monitoredLocationsLock = new object();
         private List<ILocation> _monitoredLocations { get; set; } = new List<ILocation>();
@@ -62,6 +62,10 @@ namespace Archipelago.Core.Helpers
         public async Task MonitorLocationsAsync(ArchipelagoSession currentSession, List<ILocation> locations, CancellationToken cancellationToken = default)
         {
             cancellationToken = Helpers.CombineTokens(cancellationToken);
+
+            // Link the external token so that cancelling it also stops the workers
+            var registration = cancellationToken.Register(() => _monitorToken?.Cancel());
+
             _locationsChannel = Channel.CreateUnbounded<ILocation>(new UnboundedChannelOptions
             {
                 SingleReader = false,
@@ -79,7 +83,14 @@ namespace Archipelago.Core.Helpers
                 await _locationsChannel.Writer.WriteAsync(location, _monitorToken.Token);
             }
 
-            await StartMonitoringAsync(currentSession);
+            try
+            {
+                await StartMonitoringAsync(currentSession);
+            }
+            finally
+            {
+                registration.Dispose();
+            }
         }
         private async Task StartMonitoringAsync(ArchipelagoSession currentSession)
         {
