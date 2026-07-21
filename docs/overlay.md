@@ -58,6 +58,19 @@ overlay.SetSize(400f, 300f);
 overlay.SetSizeAndPosition(50f, 50f, 400f, 300f);
 ```
 
+## Configuration file
+
+Overlay defaults can be loaded from `config.ini` instead of being hardcoded:
+
+```csharp
+using Archipelago.Core.Util.Config;
+
+var overlay = new WindowsOverlayService(AppConfig.Current.Overlay.ToOverlayOptions());
+client.IntializeOverlayService(overlay);
+```
+
+See [Configuration](configuration.md) for the full list of overlay settings.
+
 ## Disposal
 
 The overlay is disposed automatically when `ArchipelagoClient` is disposed. Call `overlay.Dispose()` directly if you manage its lifetime independently.

@@ -129,8 +129,13 @@ int hp = Memory.ReadInt(0x200000, Endianness.Big);
 Memory.Write(0x200000, hp - 10, Endianness.Big);
 ```
 
+## Failure logging
+
+Read and write operations through the default `IInvocableMemory` implementations log a warning via Serilog when `ReadProcessMemory` or `WriteProcessMemory` returns `false`. These warnings cover transient failures such as pages that are not yet committed. Access-denied failures are caught earlier at handle-open time — see [Elevation](platform-memory.md#elevation) in PlatformMemory.
+
 ## See also
 
 - [Object Mapping](object-mapping.md) — `ReadObject` / `WriteObject`
-- [PlatformMemory](platform-memory.md) — process handle and allocation utilities
+- [PlatformMemory](platform-memory.md) — process handle, allocation, and elevation utilities
 - [BizHawk](bizhawk.md) — swapping the Memory backend
+- [Configuration](configuration.md) — config.ini settings

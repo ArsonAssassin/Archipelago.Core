@@ -67,6 +67,58 @@ IntPtr PlatformMemory.CurrentHandle()  // opens/caches the process handle
 void   PlatformMemory.CloseCurrentHandle()
 ```
 
+## Elevation
+
+When `OpenProcess` fails with `ERROR_ACCESS_DENIED` (e.g. the game is running as administrator but the client is not), `CurrentHandle()` throws `ElevationRequiredException` instead of returning a zero handle.
+
+### Catching elevation failures
+
+```csharp
+using Archipelago.Core.Util.PlatformMemory;
+
+try
+{
+    var handle = PlatformMemory.CurrentHandle();
+}
+catch (ElevationRequiredException ex)
+{
+    Console.WriteLine(ex.Message);         // "Access denied opening process 1234. ..."
+    Console.WriteLine(ex.TargetProcessId); // 1234
+}
+```
+
+### ElevationHelper
+
+`ElevationHelper` provides proactive checks and a relaunch helper:
+
+```csharp
+using Archipelago.Core.Util.PlatformMemory;
+
+// Check if the current process is running as admin / root
+bool isAdmin = ElevationHelper.IsElevated();
+
+// Probe whether a specific process requires elevation to access
+bool needsAdmin = ElevationHelper.RequiresElevation(pid);
+
+// Relaunch the current process with a UAC prompt (Windows only)
+// Returns false if the user cancels the prompt
+bool launched = ElevationHelper.RestartElevated();
+```
+
+A typical startup pattern:
+
+```csharp
+int pid = PlatformMemory.GetProcessID("MyGame");
+if (ElevationHelper.RequiresElevation(pid))
+{
+    Console.WriteLine("Game requires admin access. Requesting elevation...");
+    if (!ElevationHelper.RestartElevated())
+        Console.WriteLine("UAC prompt was cancelled.");
+}
+```
+
+On Linux/macOS, `IsElevated()` checks `geteuid() == 0`. `RestartElevated()` is not supported on non-Windows platforms — instruct users to re-run with `sudo`.
+
 ## Memory management
 
 ```csharp
@@ -99,4 +151,5 @@ uint PlatformMemory.ExecuteCommand(byte[] bytes, uint timeoutSeconds = 0xFFFFFFF
 ## See also
 
 - [Memory API](memory.md)
+- [Configuration](configuration.md) — config.ini settings
 - [Advanced](advanced.md) — FunctionHook

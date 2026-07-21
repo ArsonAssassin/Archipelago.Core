@@ -84,6 +84,8 @@ Memory.Initialize(new DumpMemory(File.ReadAllBytes("memdump.bin"), 0x80000000));
 
 The native platform implementations (`WindowsMemory`, `LinuxMemory`, `MacOSMemory`) implement `IInvocableMemory : IMemory`, which extends the interface with the full Win32-style P/Invoke surface (process handles, virtual memory, module info, remote thread execution). `PlatformMemory.PlatformImpl` exposes this internally.
 
+The default `ReadByte`, `ReadByteArray`, and `WriteByteArray` implementations on `IInvocableMemory` log a warning via Serilog when the underlying platform call returns `false`. This makes transient read/write failures visible in logs without throwing exceptions. Access-denied failures are caught earlier at handle-open time — see [Elevation](platform-memory.md#elevation) in PlatformMemory.
+
 ## See also
 
 - [Memory API](memory.md)

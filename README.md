@@ -51,6 +51,7 @@ await client.Login("PlayerName");
 | [GPS Handler](docs/gps.md) | Tracking player position and map changes |
 | [Death Link](docs/death-link.md) | Synchronising deaths between players |
 | [Advanced](docs/advanced.md) | Function hooking, lag simulation |
+| [Configuration](docs/configuration.md) | config.ini file support and custom settings |
 
 ## License
 
