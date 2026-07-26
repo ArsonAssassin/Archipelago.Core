@@ -35,6 +35,7 @@ namespace Archipelago.Core.Util
 
         byte IMemory.ReadByte(ulong address)
         {
+            address += PlatformMemory.PlatformMemory.GlobalOffset;
             byte[] buffer = new byte[1];
             bool success = ReadProcessMemory(PlatformMemory.PlatformMemory.CurrentHandle(), address, buffer, buffer.Length, out _);
             if (!success)
@@ -44,6 +45,7 @@ namespace Archipelago.Core.Util
 
         byte[] IMemory.ReadByteArray(ulong address, int length)
         {
+            address += PlatformMemory.PlatformMemory.GlobalOffset;
             byte[] buffer = new byte[length];
             bool success = ReadProcessMemory(PlatformMemory.PlatformMemory.CurrentHandle(), address, buffer, buffer.Length, out _);
             if (!success)
@@ -52,10 +54,11 @@ namespace Archipelago.Core.Util
         }
 
         bool IMemory.WriteByte(ulong address, byte value)
-            => WriteProcessMemory(PlatformMemory.PlatformMemory.CurrentHandle(), address, new[] { value }, 1, out _);
+            => WriteProcessMemory(PlatformMemory.PlatformMemory.CurrentHandle(), address + PlatformMemory.PlatformMemory.GlobalOffset, new[] { value }, 1, out _);
 
         void IMemory.WriteByteArray(ulong address, byte[] data, Endianness endianness = Endianness.Little)
         {
+            address += PlatformMemory.PlatformMemory.GlobalOffset;
             if (endianness == Endianness.Big && BitConverter.IsLittleEndian ||
                 endianness == Endianness.Little && !BitConverter.IsLittleEndian)
             {
