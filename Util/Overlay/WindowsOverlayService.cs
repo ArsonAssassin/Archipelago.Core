@@ -187,7 +187,10 @@ namespace Archipelago.Core.Util.Overlay
                 const uint WS_EX_TRANSPARENT = 0x20;
                 const uint WS_EX_NOACTIVATE = 0x08000000;
                 const uint WS_EX_TOOLWINDOW = 0x00000080;
+                const uint WS_EX_LAYERED = 0x00080000;
                 const uint WS_POPUP = 0x80000000;
+                const byte LWA_ALPHA_VALUE = 255;
+                const uint LWA_ALPHA = 0x2;
 
                 var handle = _window!.Native!.Win32!.Value.Hwnd;
 
@@ -201,8 +204,9 @@ namespace Archipelago.Core.Util.Overlay
                 // Add click-through and taskbar-hidden flags.
                 // Do NOT add WS_EX_LAYERED - it conflicts with DWM-based transparent framebuffer.
                 var extendedStyle = GetWindowLong(handle, GWL_EXSTYLE);
-                extendedStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+                extendedStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED;
                 SetWindowLong(handle, GWL_EXSTYLE, extendedStyle);
+                SetLayeredWindowAttributes(handle, 0, LWA_ALPHA_VALUE,  LWA_ALPHA);
 
                 // Tell DWM to composite the entire client area with alpha.
                 // This is the documented way to get per-pixel OpenGL transparency on Windows.
@@ -464,6 +468,9 @@ namespace Archipelago.Core.Util.Overlay
         }
 
         #region Windows P/Invoke for transparency
+        [DllImport("user32.dll")]
+        private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
+
         [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
         private static extern uint GetWindowLong(IntPtr hWnd, int nIndex);
 
