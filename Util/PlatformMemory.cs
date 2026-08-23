@@ -209,6 +209,20 @@ namespace Archipelago.Core.Util.PlatformMemory
             if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
             return PlatformImpl.VirtualFreeEx(CurrentHandle(), address, IntPtr.Zero, MEM_RELEASE);
         }
+        
+        public static IntPtr FindSharedMemoryBase(int pid, string nameSubstring)
+        {
+            if (PlatformImpl is LinuxMemory linux)
+                return linux.FindSharedMemoryBase(pid, nameSubstring);
+            return IntPtr.Zero;
+        }
+        
+        public static nint AttachSharedMemory(string shmName, ulong remoteBase)
+        {
+            if (PlatformImpl is LinuxMemory linux)
+                return linux.AttachSharedMemory(shmName, remoteBase);
+            return nint.Zero;
+        }
         #endregion
         #region Remote Execution
         private static uint Execute(IntPtr address, uint timeoutSeconds = 0xFFFFFFFF)
