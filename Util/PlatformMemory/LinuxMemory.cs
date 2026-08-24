@@ -406,6 +406,8 @@ namespace Archipelago.Core.Util.PlatformMemory
         private nint _shmRemoteBase;
         private long _shmSize;
         private bool _shmAttached;
+        
+        public bool IsSharedMemoryAttached => _shmAttached;
 
         /// <summary>
         /// Opens a named POSIX shared-memory object and maps it into this process, then

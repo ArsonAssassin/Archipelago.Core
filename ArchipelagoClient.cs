@@ -93,7 +93,7 @@ namespace Archipelago.Core
 
         public ArchipelagoClient(IGameClient gameClient)
         {
-            if (gameClient.ProcId != 0 && ElevationHelper.RequiresElevation(gameClient.ProcId))
+            if (gameClient.ProcId != 0 && !PlatformMemory.HasDirectMapping && ElevationHelper.RequiresElevation(gameClient.ProcId))
             {
                 Log.Warning("Process {ProcessId} requires elevated privileges. Memory operations will fail without administrator access.", gameClient.ProcId);
                 if (!ElevationHelper.IsElevated())

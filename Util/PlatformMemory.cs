@@ -177,6 +177,9 @@ namespace Archipelago.Core.Util.PlatformMemory
         {
             return PlatformImpl.GetLastErrorMessage();
         }
+        
+        public static bool HasDirectMapping => PlatformImpl is LinuxMemory linux && linux.IsSharedMemoryAttached;
+        
         #endregion
 
         #region Memory Operations
