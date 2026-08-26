@@ -12,76 +12,96 @@ namespace Archipelago.Core.Util.PCSX2
     internal class PCSX2MemoryHelper
     {
         private const string PCSX2_MODULE_NAME = "pcsx2-qt";
+        private const string PCSX2_MODULE_FALLBACK_NAME = "pcsx2";
         private const string EEMEM_EXPORT_NAME = "EEmem";
 
         public IntPtr FindEEromAddress()
         {
             // Get the PCSX2 process ID
+            // Might be worth discussing using GetProcessIDs here and selecting the newest process instead?
             int pid = PlatformMemory.PlatformMemory.GetProcessID(PCSX2_MODULE_NAME);
+            // Some distributions run as 'pcsx2', so a quick fallback here helps with compatibility
+            pid = pid == 0 ? PlatformMemory.PlatformMemory.GetProcessID(PCSX2_MODULE_FALLBACK_NAME) : pid;
             if (pid == 0)
             {
                 Log.Logger.Warning("PCSX2 process not found");
                 return IntPtr.Zero;
             }
-
-            // Find the PCSX2 module base address
-            IntPtr moduleBase = PlatformMemory.PlatformMemory.GetModuleBaseAddress(pid, PCSX2_MODULE_NAME);
-            IntPtr eememExportAddress = IntPtr.Zero;
-            if (moduleBase != IntPtr.Zero)
-            {
-                // Find the EEmem export in the module
-                eememExportAddress = PlatformMemory.PlatformMemory.GetExportAddress(pid, moduleBase, EEMEM_EXPORT_NAME);
-            }
-            if (eememExportAddress != IntPtr.Zero)
-            {
-                // Open a handle to the process for reading
-                IntPtr processHandle = PlatformMemory.PlatformMemory.PlatformImpl.OpenProcess(
-                    PlatformMemory.PlatformMemory.PROCESS_VM_READ | PlatformMemory.PlatformMemory.PROCESS_VM_OPERATION,
-                    false, pid);
-                
-                if (processHandle == IntPtr.Zero)
-                {
-                    Log.Logger.Error("Failed to open PCSX2 process");
-                    return IntPtr.Zero;
-                }
-
-                try
-                {
-                    // Read the pointer value at the EEmem export address
-                    byte[] buffer = new byte[IntPtr.Size];
-                    if (!PlatformMemory.PlatformMemory.PlatformImpl.ReadProcessMemory(processHandle, (ulong)eememExportAddress,
-                        buffer, buffer.Length, out IntPtr bytesRead))
-                    {
-                        Log.Logger.Warning("Failed to read EEmem pointer value");
-                        return IntPtr.Zero;
-                    }
-
-                    // Convert buffer to pointer
-                    IntPtr eememBaseAddress = (IntPtr)BitConverter.ToInt64(buffer, 0);
-                    
-                    Log.Logger.Information($"Found PCSX2 EEmem at 0x{eememBaseAddress:X}");
-                    return eememBaseAddress;
-                }
-                finally
-                {
-                    PlatformMemory.PlatformMemory.PlatformImpl.CloseHandle(processHandle);
-                }
-            }
-
-            // Linux fallback: attach PCSX2's named shared memory directly
+            
+            // Preferred Linux Method, try to access shared memory exposed by PCSX2
+            // Currently, not supported in main PCSX2 build, so we try our best
+            // but fall back happily for older versions of PCSX2
             if (OperatingSystem.IsLinux())
             {
                 IntPtr shmBase = PlatformMemory.PlatformMemory.FindSharedMemoryBase(pid, "pcsx2");
                 if (shmBase != IntPtr.Zero)
                 {
                     PlatformMemory.PlatformMemory.AttachSharedMemory($"pcsx2_{pid}", (ulong)shmBase);
-                    Log.Logger.Warning($"EEmem symbol not found; using shared memory base 0x{shmBase:X} (EEmemOffset == 0)");
+                    Log.Logger.Debug($"Found shared memory base 0x{shmBase:X}");
                     return shmBase;
                 }
+                // Log verbose to show the program execution flow without scaring users while we wait for compatibility.
+                Log.Logger.Verbose("Couldn't find shm from PCSX2. This is currently expected.");
+                // In future when supported by PCSX2 officially,
+                // we can let Logger know they are probably using an outdated version 
+                // Log.Logger.Debug("Could not find Shared Memory. Are you using an older version of PCSX2?");
+            }
+            
+            // Find the PCSX2 module base address
+            IntPtr moduleBase = PlatformMemory.PlatformMemory.GetModuleBaseAddress(pid, PCSX2_MODULE_NAME);
+            if (moduleBase == IntPtr.Zero)
+            {
+                Log.Logger.Warning("Failed to find PCSX2 module");
+                return IntPtr.Zero;
             }
 
-            Log.Logger.Warning("Failed to find EEmem export");
-            return IntPtr.Zero;
+            // Find the EEmem export in the module
+            IntPtr eememExportAddress = PlatformMemory.PlatformMemory.GetExportAddress(pid, moduleBase, EEMEM_EXPORT_NAME);
+            if (eememExportAddress == IntPtr.Zero)
+            {
+                Log.Logger.Warning("Failed to find EEmem export.");
+                if (OperatingSystem.IsLinux())
+                {
+                    // pcsx2 binary symbols are commonly stripped on Linux, which is apparently unintended behaviour,
+                    // but the Flatpak is known to preserve them, so direct the user to try the Flatpak.
+                    Log.Logger.Warning("You may have better luck locating EEmem with the Flatpak build.");
+                }
+                return IntPtr.Zero;
+            }
+
+            // Open a handle to the process for reading
+            IntPtr processHandle = PlatformMemory.PlatformMemory.PlatformImpl.OpenProcess(
+                PlatformMemory.PlatformMemory.PROCESS_VM_READ | PlatformMemory.PlatformMemory.PROCESS_VM_OPERATION,
+                false, pid);
+
+            if (processHandle == IntPtr.Zero)
+            {
+                Log.Logger.Error("Failed to open PCSX2 process");
+                return IntPtr.Zero;
+            }
+
+            try
+            {
+                // Read the pointer value at the EEmem export address
+                byte[] buffer = new byte[IntPtr.Size];
+                if (!PlatformMemory.PlatformMemory.PlatformImpl.ReadProcessMemory(processHandle, (ulong)eememExportAddress,
+                    buffer, buffer.Length, out IntPtr bytesRead))
+                {
+                    Log.Logger.Warning("Failed to read EEmem pointer value");
+                    return IntPtr.Zero;
+                }
+
+                // Convert buffer to pointer
+                IntPtr eememBaseAddress = (IntPtr)BitConverter.ToInt64(buffer, 0);
+
+                Log.Logger.Information($"Found PCSX2 EEmem at 0x{eememBaseAddress:X}");
+                return eememBaseAddress;
+            }
+            finally
+            {
+                PlatformMemory.PlatformMemory.PlatformImpl.CloseHandle(processHandle);
+            }
         }
     }
 }
+
