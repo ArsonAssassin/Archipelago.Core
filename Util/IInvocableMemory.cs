@@ -33,6 +33,10 @@ namespace Archipelago.Core.Util
         nint GetModuleBaseAddress(int pid, string moduleName);
         nint GetExportAddress(int pid, nint moduleBase, string exportName);
 
+        nint AttachSharedMemory(string shmName, ulong remoteBase);
+        nint GetNamedMemoryBaseAddress(int pid, string nameSubstring);
+        bool IsNamedMemoryAttached();
+
         byte IMemory.ReadByte(ulong address)
         {
             address += PlatformMemory.PlatformMemory.GlobalOffset;

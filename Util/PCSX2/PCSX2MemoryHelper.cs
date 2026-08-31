@@ -12,16 +12,12 @@ namespace Archipelago.Core.Util.PCSX2
     internal class PCSX2MemoryHelper
     {
         private const string PCSX2_MODULE_NAME = "pcsx2-qt";
-        private const string PCSX2_MODULE_FALLBACK_NAME = "pcsx2";
         private const string EEMEM_EXPORT_NAME = "EEmem";
 
         public IntPtr FindEEromAddress()
         {
-            // Get the PCSX2 process ID
-            // Might be worth discussing using GetProcessIDs here and selecting the newest process instead?
-            int pid = PlatformMemory.PlatformMemory.GetProcessID(PCSX2_MODULE_NAME);
-            // Some distributions run as 'pcsx2', so a quick fallback here helps with compatibility
-            pid = pid == 0 ? PlatformMemory.PlatformMemory.GetProcessID(PCSX2_MODULE_FALLBACK_NAME) : pid;
+            // Use the PCSX2 process ID with built-in fallback that was already in the code but not previously utilised.
+            int pid = PlatformMemory.PlatformMemory.PCSX2_PROCESSID;
             if (pid == 0)
             {
                 Log.Logger.Warning("PCSX2 process not found");
@@ -33,7 +29,7 @@ namespace Archipelago.Core.Util.PCSX2
             // but fall back happily for older versions of PCSX2
             if (OperatingSystem.IsLinux())
             {
-                IntPtr shmBase = PlatformMemory.PlatformMemory.FindSharedMemoryBase(pid, "pcsx2");
+                IntPtr shmBase = PlatformMemory.PlatformMemory.GetNamedMemoryBaseAddress(pid, "pcsx2");
                 if (shmBase != IntPtr.Zero)
                 {
                     PlatformMemory.PlatformMemory.AttachSharedMemory($"pcsx2_{pid}", (ulong)shmBase);

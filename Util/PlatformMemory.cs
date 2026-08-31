@@ -178,8 +178,6 @@ namespace Archipelago.Core.Util.PlatformMemory
             return PlatformImpl.GetLastErrorMessage();
         }
         
-        public static bool HasDirectMapping => PlatformImpl is LinuxMemory linux && linux.IsSharedMemoryAttached;
-        
         #endregion
 
         #region Memory Operations
@@ -213,19 +211,25 @@ namespace Archipelago.Core.Util.PlatformMemory
             return PlatformImpl.VirtualFreeEx(CurrentHandle(), address, IntPtr.Zero, MEM_RELEASE);
         }
         
-        public static IntPtr FindSharedMemoryBase(int pid, string nameSubstring)
-        {
-            if (PlatformImpl is LinuxMemory linux)
-                return linux.FindSharedMemoryBase(pid, nameSubstring);
-            return IntPtr.Zero;
-        }
+        // Keeping these as platform-agnostic methods but expanding their use to implicitly support other platforms.
+        // Windows is unlikely to support this method any time soon (though it may in future),
+        // but the main benefit of this is it allows us to port the Linux fixes to MacOS with minimal effort.
+        #region Shared Memory Operations
+            public static IntPtr GetNamedMemoryBaseAddress(int pid, string nameSubstring)
+            {
+                return PlatformImpl.GetNamedMemoryBaseAddress(pid, nameSubstring);
+            }
+                
+            public static nint AttachSharedMemory(string shmName, ulong remoteBase)
+            { 
+                return PlatformImpl.AttachSharedMemory(shmName, remoteBase);
+            }
+            
+            public static bool HasDirectMapping() {
+                return PlatformImpl.IsNamedMemoryAttached();
+            }
+        #endregion
         
-        public static nint AttachSharedMemory(string shmName, ulong remoteBase)
-        {
-            if (PlatformImpl is LinuxMemory linux)
-                return linux.AttachSharedMemory(shmName, remoteBase);
-            return nint.Zero;
-        }
         #endregion
         #region Remote Execution
         private static uint Execute(IntPtr address, uint timeoutSeconds = 0xFFFFFFFF)
