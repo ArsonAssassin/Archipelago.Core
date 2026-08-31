@@ -177,6 +177,7 @@ namespace Archipelago.Core.Util.PlatformMemory
         {
             return PlatformImpl.GetLastErrorMessage();
         }
+        
         #endregion
 
         #region Memory Operations
@@ -209,6 +210,26 @@ namespace Archipelago.Core.Util.PlatformMemory
             if (CurrentProcId == 0) throw new ArgumentException("CurrentProcId has not been set");
             return PlatformImpl.VirtualFreeEx(CurrentHandle(), address, IntPtr.Zero, MEM_RELEASE);
         }
+        
+        // Keeping these as platform-agnostic methods but expanding their use to implicitly support other platforms.
+        // Windows is unlikely to support this method any time soon (though it may in future),
+        // but the main benefit of this is it allows us to port the Linux fixes to MacOS with minimal effort.
+        #region Shared Memory Operations
+            public static IntPtr GetNamedMemoryBaseAddress(int pid, string nameSubstring)
+            {
+                return PlatformImpl.GetNamedMemoryBaseAddress(pid, nameSubstring);
+            }
+                
+            public static nint AttachSharedMemory(string shmName, ulong remoteBase)
+            { 
+                return PlatformImpl.AttachSharedMemory(shmName, remoteBase);
+            }
+            
+            public static bool HasDirectMapping() {
+                return PlatformImpl.IsNamedMemoryAttached();
+            }
+        #endregion
+        
         #endregion
         #region Remote Execution
         private static uint Execute(IntPtr address, uint timeoutSeconds = 0xFFFFFFFF)

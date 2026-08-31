@@ -319,6 +319,22 @@ namespace Archipelago.Core.Util.PlatformMemory
             }
         }
 
+        // Named memory could be supported on Windows in the future, I want to focus on getting the PCSX2 patch for Linux
+        // out first before pushing for it to be made available on Windows, too. It would be nice as a cross-platform
+        // method, but there are already established ways of doing similar things on Windows, so not sure how that would go.
+        public IntPtr AttachSharedMemory(string shmName, ulong remoteBase) {
+            Log.Logger.Fatal($"Named Memory Attachment not yet supported for Windows");
+            throw new NotImplementedException();
+        }
+        public IntPtr GetNamedMemoryBaseAddress(int pid, string nameSubstring) {
+            Log.Logger.Fatal($"Named Memory not yet supported for Windows");
+            throw new NotImplementedException();
+        }
+        public bool IsNamedMemoryAttached() {
+            Log.Logger.Fatal($"Named Memory Attachment not yet supported for Windows");
+            throw new NotImplementedException();
+        }
+
         private nint FindExportTable(nint processHandle, nint moduleBaseAddress)
         {
             // Read the DOS header

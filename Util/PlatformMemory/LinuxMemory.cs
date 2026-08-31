@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using Serilog;
+using Serilog.Core;
 using static Archipelago.Core.Util.Enums;
 
 namespace Archipelago.Core.Util.PlatformMemory
@@ -53,6 +54,12 @@ namespace Archipelago.Core.Util.PlatformMemory
         private const uint PAGE_READONLY = 0x02;
         private const uint MEM_COMMIT = 0x00001000;
         private const uint MEM_RELEASE = 0x00008000;
+        
+        // Direct shared-memory attach mode flags (shm_open + mmap)
+        private const int MAP_SHARED = 0x01;
+        private const int O_RDWR = 0x2;
+        private const int SEEK_SET = 0;
+        private const int SEEK_END = 2;
         #endregion
 
         #region Structures
@@ -145,6 +152,15 @@ namespace Archipelago.Core.Util.PlatformMemory
 
         [DllImport("libc.so.6", EntryPoint = "dlclose", SetLastError = true)]
         private static extern int dlclose(nint handle);
+        
+        [DllImport("libc.so.6", EntryPoint = "shm_open", SetLastError = true)]
+        private static extern int shm_open(string name, int oflag, int mode);
+
+        [DllImport("libc.so.6", EntryPoint = "close", SetLastError = true)]
+        private static extern int close(int fd);
+
+        [DllImport("libc.so.6", EntryPoint = "lseek", SetLastError = true)]
+        private static extern long lseek(int fd, long offset, int whence);
         #endregion
 
         #region Error Handling
@@ -385,11 +401,114 @@ namespace Archipelago.Core.Util.PlatformMemory
             }
         }
         #endregion
+        
+        #region Direct Shared-memory Attach
+        private nint _shmLocalBase;
+        private nint _shmRemoteBase;
+        private long _shmSize;
+        private bool _shmAttached;
+
+        public bool IsNamedMemoryAttached() {
+            return _shmAttached;
+        }
+
+        // Rewrote the generated function, pretty standard stuff so not much to change functionally, just wrote it myself :)
+        public nint AttachSharedMemory(string shmName, ulong remoteBase)
+        {
+            if (_shmAttached) return _shmLocalBase;
+            
+            int fd = shm_open(shmName, O_RDWR, 0);
+            if (fd < 0)
+            {
+                Log.Logger.Warning($"Could not shm_open('{shmName}'): {GetLastErrorMessage()}");
+                return nint.Zero;
+            }
+
+            long size = lseek(fd, 0, SEEK_END);
+            long returnHome = lseek(fd, 0, SEEK_SET);
+            if (size > 0 || returnHome > 0)
+            {
+                nint localBase = mmap(nint.Zero, (ulong)size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+                if (localBase.ToInt64() > 0)
+                {
+                    _shmLocalBase = localBase;
+                    _shmRemoteBase = new nint((long)remoteBase);
+                    _shmSize = size;
+                    
+                    close(fd);
+                    _shmAttached = true;
+                    Log.Logger.Information($"Attached shared memory '{shmName}' ({size} bytes) at 0x{localBase:X} (remote address 0x{remoteBase:X})");
+                    return localBase;
+                }
+                Log.Logger.Error($"mmap of shared memory '{shmName}' failed: ");
+            }
+            else {
+                Log.Logger.Warning($"Could not determine size of shared memory '{shmName}': {GetLastErrorMessage()}");
+            }
+            
+            close(fd);
+            return nint.Zero;
+        }
+
+        // Rewrote function and added some better error handling behaviour.
+        // Will now fall back to process_vm_readv and ptrace method if it fails for any reason.
+        private bool TryReadMapped(ulong address, byte[] buffer, int length, out nint bytesRead)
+        {
+            bytesRead = nint.Zero;
+            if (!_shmAttached) return false;
+            
+            ulong remoteBase = (ulong)_shmRemoteBase.ToInt64();
+            if (address < remoteBase) return false;
+
+            ulong offset = address - remoteBase;
+            if (offset + (ulong)length > (ulong)_shmSize) return false;
+
+            try {
+                Marshal.Copy(new nint(_shmLocalBase.ToInt64() + (long)offset), buffer, 0, length);
+                bytesRead = new nint(length);
+            }
+            catch (Exception ex) {
+                Log.Logger.Error($"Failed to read shared memory from 0x{address:X}: {ex.Message}");
+                return false;
+            }
+            return true;
+        }
+
+        // Same as above, rewrote w/ a few improvements
+        private bool TryWriteMapped(ulong address, byte[] buffer, int length, out nint bytesWritten)
+        {
+            bytesWritten = nint.Zero;
+            if (!_shmAttached) return false;
+
+            ulong remoteBase = (ulong)_shmRemoteBase.ToInt64();
+            if (address < remoteBase) return false;
+
+            ulong offset = address - remoteBase;
+            if (offset + (ulong)length > (ulong)_shmSize) return false;
+
+            try {
+                Marshal.Copy(buffer, 0, new nint(_shmLocalBase.ToInt64() + (long)offset), length);
+                bytesWritten = new nint(length);
+            }
+            catch (Exception ex) {
+                Log.Logger.Error($"Failed to write to shared memory at 0x{address:X}: {ex.Message}");
+                return false;
+            }
+            return true;
+        }
+
+        #endregion
 
         #region Memory Operations
         public bool ReadProcessMemory(nint processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out nint lpNumberOfBytesRead)
         {
             lpNumberOfBytesRead = nint.Zero;
+            // Try to read directly from shared memory first, if available.
+            if (TryReadMapped(lpBaseAddress, lpBuffer, dwSize, out nint mappedRead))
+            {
+                lpNumberOfBytesRead = mappedRead;
+                return true;
+            }
             int pid = processH.ToInt32();
 
             if (pid <= 0)
@@ -455,6 +574,12 @@ namespace Archipelago.Core.Util.PlatformMemory
         public bool WriteProcessMemory(nint processH, ulong lpBaseAddress, byte[] lpBuffer, int dwSize, out nint lpNumberOfBytesWritten)
         {
             lpNumberOfBytesWritten = nint.Zero;
+            // Try to write using shared memory first, if available.
+            if (TryWriteMapped(lpBaseAddress, lpBuffer, dwSize, out nint mappedWritten))
+            {
+                lpNumberOfBytesWritten = mappedWritten;
+                return true;
+            }
             int pid = processH.ToInt32();
 
             if (pid <= 0)
@@ -939,6 +1064,34 @@ namespace Archipelago.Core.Util.PlatformMemory
                 Log.Logger.Error($"Error getting module base address on Linux: {ex.Message}");
                 return nint.Zero;
             }
+        }
+        
+        public nint GetNamedMemoryBaseAddress(int pid, string nameSubstring)
+        {
+            try
+            {
+                string mapsPath = $"/proc/{pid}/maps";
+                foreach (string line in File.ReadAllLines(mapsPath))
+                {
+                    if (!line.Contains(nameSubstring, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!line.Contains("/dev/shm/", StringComparison.OrdinalIgnoreCase) &&
+                        !line.Contains("memfd:", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    string[] addresses = parts[0].Split('-');
+                    return new nint((long)Convert.ToUInt64(addresses[0], 16));
+                }
+                
+                Log.Logger.Warning($"Could not find shared memory region '{nameSubstring}' in process {pid}");
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Error($"Error reading memory maps for process {pid}: {ex.Message}");
+            }
+
+            return nint.Zero;
         }
         #endregion
 
