@@ -1,4 +1,5 @@
-﻿using Archipelago.Core.Util.PlatformMemory;
+﻿using Archipelago.Core.Models;
+using Archipelago.Core.Util.PlatformMemory;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -143,6 +144,41 @@ namespace Archipelago.Core.Util.PlatformMemory
                 return [];
             }
 
+        }
+        public static List<ProcessInfo> DiscoverProcesses(string searchName)
+        {
+            Log.Debug("Discovering processes matching {SearchName}", searchName);
+            var results = new List<ProcessInfo>();
+
+            List<int> pids = PlatformImpl.GetPIDs(searchName);
+
+            if (pids.Count == 0)
+            {
+                Process[] allProcesses = Process.GetProcesses();
+                pids = allProcesses
+                    .Where(p => p.ProcessName.Contains(searchName, StringComparison.OrdinalIgnoreCase))
+                    .Select(p => p.Id)
+                    .ToList();
+            }
+
+            foreach (int pid in pids)
+            {
+                try
+                {
+                    using var proc = Process.GetProcessById(pid);
+                    results.Add(new ProcessInfo(
+                        pid,
+                        proc.ProcessName,
+                        proc.MainWindowTitle ?? string.Empty
+                    ));
+                }
+                catch (ArgumentException)
+                {
+                    Log.Debug("Process {PID} exited during discovery", pid);
+                }
+            }
+
+            return results;
         }
         public static ulong GetPCSX2Offset()
         {

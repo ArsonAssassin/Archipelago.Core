@@ -192,6 +192,11 @@ namespace Archipelago.Core
             DisconnectHandlers();
             try
             {
+				string lowerHost = host.ToLower();
+				if(lowerHost.Contains("/connect") && lowerHost.Contains("archipelago"))
+				{
+					host = host.Substring(lowerHost.IndexOf("archipelago"));
+				}
                 CurrentSession = ArchipelagoSessionFactory.CreateSession(host);
                 var roomInfo = await CurrentSession.ConnectAsync();
                 Seed = roomInfo.SeedName;

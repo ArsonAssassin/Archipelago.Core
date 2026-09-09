@@ -8,7 +8,7 @@ namespace Archipelago.Core.Models
 {
     public enum NibblePosition
     {
-        Upper,
-        Lower
+        Upper = 0,
+        Lower = 1
     }
 }
