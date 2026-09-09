@@ -1,4 +1,4 @@
-﻿using Serilog;
+using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -16,14 +16,33 @@ namespace Archipelago.Core.Util.PCSX2
 
         public IntPtr FindEEromAddress()
         {
-            // Get the PCSX2 process ID
-            int pid = PlatformMemory.PlatformMemory.GetProcessID(PCSX2_MODULE_NAME);
+            // Use the PCSX2 process ID with built-in fallback that was already in the code but not previously utilised.
+            int pid = PlatformMemory.PlatformMemory.PCSX2_PROCESSID;
             if (pid == 0)
             {
                 Log.Logger.Warning("PCSX2 process not found");
                 return IntPtr.Zero;
             }
-
+            
+            // Preferred Linux Method, try to access shared memory exposed by PCSX2
+            // Currently, not supported in main PCSX2 build, so we try our best
+            // but fall back happily for older versions of PCSX2
+            if (OperatingSystem.IsLinux())
+            {
+                IntPtr shmBase = PlatformMemory.PlatformMemory.GetNamedMemoryBaseAddress(pid, "pcsx2");
+                if (shmBase != IntPtr.Zero)
+                {
+                    PlatformMemory.PlatformMemory.AttachSharedMemory($"pcsx2_{pid}", (ulong)shmBase);
+                    Log.Logger.Debug($"Found shared memory base 0x{shmBase:X}");
+                    return shmBase;
+                }
+                // Log verbose to show the program execution flow without scaring users while we wait for compatibility.
+                Log.Logger.Verbose("Couldn't find shm from PCSX2. This is currently expected.");
+                // In future when supported by PCSX2 officially,
+                // we can let Logger know they are probably using an outdated version 
+                // Log.Logger.Debug("Could not find Shared Memory. Are you using an older version of PCSX2?");
+            }
+            
             // Find the PCSX2 module base address
             IntPtr moduleBase = PlatformMemory.PlatformMemory.GetModuleBaseAddress(pid, PCSX2_MODULE_NAME);
             if (moduleBase == IntPtr.Zero)
@@ -36,7 +55,13 @@ namespace Archipelago.Core.Util.PCSX2
             IntPtr eememExportAddress = PlatformMemory.PlatformMemory.GetExportAddress(pid, moduleBase, EEMEM_EXPORT_NAME);
             if (eememExportAddress == IntPtr.Zero)
             {
-                Log.Logger.Warning("Failed to find EEmem export");
+                Log.Logger.Warning("Failed to find EEmem export.");
+                if (OperatingSystem.IsLinux())
+                {
+                    // pcsx2 binary symbols are commonly stripped on Linux, which is apparently unintended behaviour,
+                    // but the Flatpak is known to preserve them, so direct the user to try the Flatpak.
+                    Log.Logger.Warning("You may have better luck locating EEmem with the Flatpak build.");
+                }
                 return IntPtr.Zero;
             }
 

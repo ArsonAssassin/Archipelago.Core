@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using Serilog;
 
 namespace Archipelago.Core.Util.PlatformMemory
 {
@@ -54,8 +55,34 @@ namespace Archipelago.Core.Util.PlatformMemory
         /// </summary>
         public static bool RequiresElevation(int processId)
         {
+            
+            
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
+                // More accurate method of checking elevation on Linux, not sure how maxOS behaves, but might be foldable into this as well.
+                // Some processes may make their memory dumpable.
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) {
+                    try {
+                        var procInfo = System.IO.File.ReadAllLines($"/proc/{processId}/status");
+                        return procInfo.Any(s => {
+                            bool containsDumpable = s.StartsWith("Dumpable:", StringComparison.Ordinal);
+                            if (!containsDumpable) {
+                                return false;
+                            }
+
+                            int dumpableStatus;
+                            if (int.TryParse(s.Split(":")[1], out dumpableStatus)) {
+                                return containsDumpable && dumpableStatus > 0;
+                            }
+                            // shouldn't really throw this type of exception here, but it allows us to fail loudly while still falling back under predictable fail cases
+                            throw new IOException("Failed to parse process status.");
+                        });
+                    }
+                    catch (IOException) {
+                        Log.Logger.Information($"Failed to read '/proc/${processId}/status' to get elevation info, will try fallback.");
+                    }
+                }
+                
                 // On Linux/macOS, check if /proc/{pid}/mem is readable
                 try
                 {
