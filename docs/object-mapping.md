@@ -41,7 +41,7 @@ Memory.WriteObject(baseAddress, player);
 [MemoryOffset(uint offset,
               int stringLength   = 100,   // max bytes to read for string properties
               int collectionLength = 0,   // element count for List<T> / IList<T> / ICollection<T>
-              int bitPosition    = -1,    // reserved
+              int bitPosition    = 0,    // position of an individual bit to read for booleans
               int byteArrayLength = 0)]   // byte count for byte[] properties
 ```
 
@@ -50,6 +50,7 @@ Memory.WriteObject(baseAddress, player);
 | `offset` | all | Byte offset from the base address |
 | `stringLength` | `string` | Maximum bytes to read |
 | `collectionLength` | `List<T>` etc. | Number of elements to read/write |
+| `bitPosition` | `int` etc. | position of bit to read for boolean value |
 | `byteArrayLength` | `byte[]` | Number of bytes to read/write |
 
 ## Supported property types
@@ -61,7 +62,7 @@ Memory.WriteObject(baseAddress, player);
 | `int`, `uint` | Endianness applied |
 | `long`, `ulong` | Endianness applied |
 | `float`, `double` | Endianness applied |
-| `bool` | Reads/writes bit 0 of the byte at the offset |
+| `bool` | Reads/writes bit defined by `bitPosition` of the byte at the offset |
 | `string` | UTF-8, length controlled by `stringLength` |
 | `byte[]` | Length controlled by `byteArrayLength` |
 | `enum` | Underlying type is used |
