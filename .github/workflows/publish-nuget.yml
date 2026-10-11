@@ -26,7 +26,9 @@ jobs:
         run: sed -i 's|<Version>.*</Version>|<Version>${{ inputs.version }}</Version>|' Archipelago.Core.csproj
 
       - name: Build and pack
-        run: dotnet pack Archipelago.Core.csproj -c Release        
+        run: |
+          dotnet build Archipelago.Core.csproj -c Release
+          dotnet pack Archipelago.Core.csproj -c Release        
          
       - name: Upload package
         uses: actions/upload-artifact@v4
