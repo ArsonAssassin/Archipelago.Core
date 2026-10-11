@@ -74,4 +74,4 @@ jobs:
           dotnet nuget push
           "./packages/*.nupkg"
           --source https://api.nuget.org/v3/index.json
-          --api-key "${{ steps.nuget-login.outputs.api-key }}"
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
