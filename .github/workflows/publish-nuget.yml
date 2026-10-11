@@ -1,0 +1,41 @@
+name: Publish to NuGet
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version'
+        required: true
+        default: '2.0.3'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Update version in csproj
+        run: sed -i 's|<Version>.*</Version>|<Version>${{ inputs.version }}</Version>|' Archipelago.Core.csproj
+
+      - name: Build and pack
+        run: dotnet pack Archipelago.Core.csproj -c Release
+
+      - name: Push to NuGet
+        run: dotnet nuget push bin/Release/Archipelago.Core.${{ inputs.version }}.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+
+      - name: Commit version bump
+        run: |
+          git diff --quiet Archipelago.Core.csproj && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Archipelago.Core.csproj
+          git commit -m "chore: bump version to ${{ inputs.version }}"
+          git push
