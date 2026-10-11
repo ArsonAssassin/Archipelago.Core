@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md)
 
-`GPSHandler` polls the game's position data at a configurable interval and pushes changes to the Archipelago server's data storage via `GPSStateManager`. It fires events when the player moves or changes map.
+`GPSHandler` polls the game's position data at a configurable interval and pushes changes to the Archipelago server's data storage via `GPSStateManager`. It fires events when the player moves or changes map. This is designed to assist with development of autotabbing trackers but may have other uses.
 
 ## Setup
 

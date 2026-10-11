@@ -108,6 +108,7 @@ var composite = new CompositeLocation
     }
 };
 ```
+More `CompositeLocation`s can be nested within each other to create complex chains of AND/OR logic.
 
 ## Starting monitoring
 

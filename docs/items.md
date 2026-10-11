@@ -16,7 +16,7 @@ You can call `ReceiveReady` again at any time to resume delivery after a pause (
 
 ## Handling items
 
-Subscribe to `ItemManager.ItemReceived` before (or immediately after) calling `ReceiveReady`:
+Subscribe to `ItemManager.ItemReceived` before calling `ReceiveReady`:
 
 ```csharp
 client.ItemManager.ItemReceived += (sender, e) =>

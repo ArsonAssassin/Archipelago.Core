@@ -27,7 +27,7 @@ hook.Uninstall();
 
 ## Lag Simulator
 
-`LagSimulator` suspends the game process threads to simulate lag. Useful for testing timing-sensitive item and location logic without needing a slow machine.
+`LagSimulator` suspends the game process threads to simulate lag. Designed for a "Lag Trap" in Dark Souls Remastered originally, but is compatible with any process.
 
 ```csharp
 using Archipelago.Core.Util;
