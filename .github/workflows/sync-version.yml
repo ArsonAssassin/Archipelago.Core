@@ -1,0 +1,34 @@
+name: Sync workflow version default
+
+on:
+  push:
+    paths:
+      - 'Archipelago.Core.csproj'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from csproj
+        id: csproj
+        run: |
+          version=$(grep -oPm1 '(?<=<Version>)[^<]+' Archipelago.Core.csproj)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Update publish workflow default
+        run: |
+          sed -i "s/default: '.*'/default: '${{ steps.csproj.outputs.version }}'/" .github/workflows/publish-nuget.yml
+
+      - name: Commit if changed
+        run: |
+          git diff --quiet .github/workflows/publish-nuget.yml && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/publish-nuget.yml
+          git commit -m "chore: sync NuGet publish default version to ${{ steps.csproj.outputs.version }}"
+          git push
