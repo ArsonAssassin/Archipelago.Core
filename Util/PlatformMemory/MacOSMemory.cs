@@ -607,21 +607,7 @@ namespace Archipelago.Core.Util.PlatformMemory
             return processes.Select(x => x.Id).ToList();
         }
         
-        // In theory it should be a quick copy+paste job to get working on MacOS.
-        // Just need someone with a Mac to test and confirm!
-        public IntPtr AttachSharedMemory(string shmName, ulong remoteBase) {
-            Log.Logger.Fatal($"Named Memory Attachment not yet supported for MacOS");
-            throw new NotImplementedException();
-        }
-        public IntPtr GetNamedMemoryBaseAddress(int pid, string nameSubstring) {
-            Log.Logger.Fatal($"Named Memory not yet supported for MacOS");
-            throw new NotImplementedException();
-        }
-        public bool IsNamedMemoryAttached() {
-            Log.Logger.Fatal($"Named Memory Attachment not yet supported for MacOS");
-            throw new NotImplementedException();
-        }
-        
+       
         #endregion
 
         #region Module Information
