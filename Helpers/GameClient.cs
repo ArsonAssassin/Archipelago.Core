@@ -14,6 +14,8 @@ namespace Archipelago.Core.Helpers
     {
         private int _pinnedProcId;
 
+        public static IProcessPicker? ProcessPicker { get; set; }
+
         public GameClient(string exeName)
         {
             ProcessName = exeName;
@@ -70,6 +72,37 @@ namespace Archipelago.Core.Helpers
                 }
             }
             return IsConnected;
+        }
+
+        public async Task<bool> ConnectAsync()
+        {
+            // If already pinned to a specific PID, skip resolution
+            if (_pinnedProcId != 0)
+                return Connect();
+
+            var processes = PlatformMemory.DiscoverProcesses(ProcessName);
+
+            if (processes.Count == 1)
+            {
+                _pinnedProcId = processes[0].PID;
+                return Connect();
+            }
+
+            // No picker registered → fall back to existing behavior
+            if (ProcessPicker == null)
+                return Connect();
+
+            // 0 results → empty search field; multiple → prepopulate with exe name
+            string searchText = processes.Count > 1 ? ProcessName : "";
+            var selected = await ProcessPicker.PickProcessAsync(searchText);
+
+            if (selected != null)
+            {
+                ProcessName = selected.ProcessName;
+                _pinnedProcId = selected.PID;
+            }
+
+            return Connect();
         }
     }
 }
