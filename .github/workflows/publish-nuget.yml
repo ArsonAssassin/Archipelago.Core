@@ -9,7 +9,7 @@ on:
         default: '2.0.3'
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -26,10 +26,13 @@ jobs:
         run: sed -i 's|<Version>.*</Version>|<Version>${{ inputs.version }}</Version>|' Archipelago.Core.csproj
 
       - name: Build and pack
-        run: dotnet pack Archipelago.Core.csproj -c Release
-
-      - name: Push to NuGet
-        run: dotnet nuget push bin/Release/Archipelago.Core.${{ inputs.version }}.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
+        run: dotnet pack Archipelago.Core.csproj -c Release        
+         
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: bin/Release/Archipelago.Core.${{ inputs.version }}.nupkg
 
       - name: Commit version bump
         run: |
@@ -39,3 +42,34 @@ jobs:
           git add Archipelago.Core.csproj
           git commit -m "chore: bump version to ${{ inputs.version }}"
           git push
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: ./packages
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Log in to NuGet.org
+        id: nuget-login
+        uses: nuget/login@v1
+        with:
+          user: ArsonAssassin
+
+      - name: Push to NuGet
+        run: >-
+          dotnet nuget push
+          "./packages/*.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ steps.nuget-login.outputs.api-key }}"
